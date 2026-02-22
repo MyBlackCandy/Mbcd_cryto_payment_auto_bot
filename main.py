@@ -122,13 +122,19 @@ async def add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         add_wallet(chat_id, coin, address, note)
 
-        await update.message.reply_text(
-            f"✅ 添加成功\n"
+        note = w.get("note") or ""
+note_text = f"备注: {escape_md(note)}\n" if note else ""
+
+    await app.bot.send_message(
+            chat_id,
+            f"🚨 新交易通知\n\n"
+            f"{note_text}"
             f"币种: {coin}\n"
-            f"备注: {escape_md(note)}\n"
+            f"数量: {amount}"
+            f"{usd_text}\n"
             f"地址: `{address}`",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        parse_mode=ParseMode.MARKDOWN
+    )
 
         context.user_data.clear()
 
