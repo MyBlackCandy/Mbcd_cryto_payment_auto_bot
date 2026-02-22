@@ -346,43 +346,49 @@ async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== list ==================
 async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    try:
+        chat_id = update.effective_chat.id
+        wallets = get_wallets()
 
-    wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
+        # กรองเฉพาะกลุ่มนี้
+        wallets = [w for w in wallets if w["chat_id"] == chat_id]
 
-    if not wallets:
-        await update.message.reply_text("没有 address")
-        return
+        if not wallets:
+            await update.message.reply_text("没有 address")
+            return
 
-    # เรียงลำดับเหรียญที่ต้องการแสดง
-    coin_order = ["BTC", "ETH", "ERC20", "TRC20"]
+        # เรียงเหรียญตามลำดับ
+        coin_order = ["BTC", "ETH", "ERC20", "TRC20"]
 
-    # จัดกลุ่มแบบ dynamic
-    grouped = {}
-    for w in wallets:
-        grouped.setdefault(w["coin"], []).append(w)
+        grouped = {}
+        for w in wallets:
+            grouped.setdefault(w["coin"], []).append(w)
 
-    text = "📋 当前群监控地址\n\n"
+        text = "📋 当前群监控地址\n\n"
 
-    for coin in coin_order:
-        if coin not in grouped:
-            continue
+        for coin in coin_order:
+            if coin not in grouped:
+                continue
 
-        text += f"*{coin}*\n"
+            text += f"{coin}\n"
 
-        for w in grouped[coin]:
-            note = w.get("note") or "未备注"
-            note_safe = escape_markdown(note)
-            address_safe = escape_markdown(w["address"])
+            for w in grouped[coin]:
+                note = w.get("note") or "未备注"
+                address = w["address"]
 
-            text += f"{note_safe} | `{address_safe}`\n"
+                # ไม่ต้อง escape address เพราะใช้ backtick
+                text += f"{note} | `{address}`\n"
 
-        text += "\n"
+            text += "\n"
 
-    await update.message.reply_text(
-        text,
-        parse_mode=ParseMode.MARKDOWN_V2
-    )
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    except Exception as e:
+        print("LIST ERROR:", e)
+        await update.message.reply_text("list 出错")
 
 # ================== MAIN ==================
 def main():
