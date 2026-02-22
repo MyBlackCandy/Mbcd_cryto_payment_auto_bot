@@ -36,19 +36,19 @@ def get_latest_tx(chain, address):
 
     if chain in ["ETH", "USDT-ERC20"]:
 
-    action = "tokentx" if chain == "USDT-ERC20" else "txlist"
+        action = "tokentx" if chain == "USDT-ERC20" else "txlist"
 
-    r = requests.get(
-        "https://api.etherscan.io/api",
-        params={
-            "module": "account",
-            "action": action,
-            "address": address,
-            "sort": "desc",
-            "apikey": ETHERSCAN_API
-        },
-        timeout=10
-    ).json()
+        r = requests.get(
+            "https://api.etherscan.io/api",
+            params={
+                "module": "account",
+                "action": action,
+                "address": address,
+                "sort": "desc",
+                "apikey": ETHERSCAN_API
+            },
+            timeout=10
+        ).json()
 
     # ✅ ตรวจสอบให้แน่ใจว่า result เป็น list
     if r.get("status") == "1" and isinstance(r.get("result"), list) and r["result"]:
