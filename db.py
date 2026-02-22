@@ -49,8 +49,8 @@ def add_wallet(chat_id, coin, address):
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO wallets (chat_id, coin, address)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (chat_id, address) DO NOTHING
+        VALUES (%s,%s,%s)
+        ON CONFLICT DO NOTHING
     """, (chat_id, coin, address))
     conn.commit()
     conn.close()
@@ -75,12 +75,29 @@ def add_admin(chat_id, user_id):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO admins (chat_id, user_id)
-        VALUES (%s, %s)
+        INSERT INTO admins (chat_id,user_id)
+        VALUES (%s,%s)
         ON CONFLICT DO NOTHING
     """, (chat_id, user_id))
     conn.commit()
     conn.close()
+
+def remove_admin(chat_id, user_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        DELETE FROM admins WHERE chat_id=%s AND user_id=%s
+    """, (chat_id, user_id))
+    conn.commit()
+    conn.close()
+
+def get_admins(chat_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM admins WHERE chat_id=%s", (chat_id,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
 
 def is_admin(chat_id, user_id, master_id):
     if user_id == master_id:
@@ -99,8 +116,7 @@ def already_notified(chat_id, txid):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        SELECT 1 FROM notified_txs
-        WHERE chat_id=%s AND txid=%s
+        SELECT 1 FROM notified_txs WHERE chat_id=%s AND txid=%s
     """, (chat_id, txid))
     result = cur.fetchone()
     conn.close()
@@ -111,7 +127,7 @@ def mark_notified(chat_id, txid):
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO notified_txs (chat_id, txid)
-        VALUES (%s, %s)
+        VALUES (%s,%s)
         ON CONFLICT DO NOTHING
     """, (chat_id, txid))
     conn.commit()
