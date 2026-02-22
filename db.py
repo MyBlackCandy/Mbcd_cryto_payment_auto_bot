@@ -52,7 +52,16 @@ def init_db():
         user_id BIGINT NOT NULL
     );
     """)
-
+     # ตาราง notified_txs
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS notified_txs (
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT NOT NULL,
+        txid TEXT NOT NULL,
+        UNIQUE(chat_id, txid)
+    );
+     """)
+    
     cur.execute("""
     CREATE UNIQUE INDEX IF NOT EXISTS unique_admin_per_group
     ON admins(chat_id, user_id);
