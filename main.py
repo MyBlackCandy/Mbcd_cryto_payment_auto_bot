@@ -424,25 +424,32 @@ async def auto_check(app):
         await asyncio.sleep(CHECK_INTERVAL)
 
 
-async def startup(app):
-    asyncio.create_task(auto_check(app))
+
 
 async def startup(app):
 
-    print("🚀 Bot started successfully")
+    print("🚀 Bot restarted")
 
-    # ส่งข้อความหา Master
-    if MASTER_ID:
-        try:
-            await app.bot.send_message(
-                MASTER_ID,
-                "🤖 机器人已启动\n✅ 系统已准备好开始监控"
-            )
-        except Exception as e:
-            print("Startup notify error:", e)
+    try:
+        wallets = get_all_wallets()
+
+        # ดึง chat_id ไม่ให้ซ้ำ
+        chat_ids = list(set(w["chat_id"] for w in wallets))
+
+        for chat_id in chat_ids:
+            try:
+                await app.bot.send_message(
+                    chat_id,
+                    "🤖 Bot 已重新启动\n\n"
+                    "✅ 系统已恢复监控"
+                )
+            except Exception as e:
+                print(f"Notify error {chat_id}:", e)
+
+    except Exception as e:
+        print("Startup error:", e)
 
     asyncio.create_task(auto_check(app))
-
 # ================== MAIN ==================
 def main():
     init_pool()
