@@ -2,33 +2,39 @@ import os
 import asyncio
 import requests
 from decimal import Decimal
+from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from db import *
 from telegram.constants import ParseMode
-
-
+from db import *
 
 TOKEN = os.getenv("TOKEN")
 MASTER_ID = int(os.getenv("MASTER_ID"))
-ETHERSCAN_KEY = os.getenv("ETHERSCAN_KEY")
+ALCHEMY_KEY = os.getenv("ALCHEMY_KEY")
 
 CHECK_INTERVAL = 30
 
-# ================= PRICE =================
 
+# ================= Markdown Safe =================
+
+def escape_markdown(text):
+    escape_chars = r"_*[]()~`>#+-=|{}.!"
+    return "".join("\\" + c if c in escape_chars else c for c in text)
+
+
+# ================= PRICE =================
 
 def get_price(coin):
     coin_map = {
         "BTC": "bitcoin",
         "ETH": "ethereum",
-        "TRX": "tron"
     }
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_map[coin]}&vs_currencies=usd"
     data = requests.get(url).json()
     return Decimal(str(list(data.values())[0]["usd"]))
 
-# ================= BLOCKCHAIN =================
+
+# ================= BTC =================
 
 def check_btc(address):
     data = requests.get(
@@ -40,13 +46,19 @@ def check_btc(address):
             if vin.get("prevout", {}).get("scriptpubkey_address") == address:
                 amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
                 return tx["txid"], amount, tx["status"]["block_time"]
+
     return None
 
 
-def check_eth_alchemy(address, erc20=False):
-    url = f"https://eth-mainnet.g.alchemy.com/v2/{os.getenv('ALCHEMY_KEY')}"
+# ================= ETH + ERC20 (Alchemy) =================
 
-    category = ["erc20"] if erc20 else ["external"]
+def check_eth_alchemy(address, erc20=False):
+    url = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
+
+    if erc20:
+        category = ["erc20"]
+    else:
+        category = ["external", "internal"]
 
     payload = {
         "jsonrpc": "2.0",
@@ -64,7 +76,6 @@ def check_eth_alchemy(address, erc20=False):
     }
 
     res = requests.post(url, json=payload).json()
-
     transfers = res.get("result", {}).get("transfers", [])
 
     if not transfers:
@@ -73,15 +84,20 @@ def check_eth_alchemy(address, erc20=False):
     tx = transfers[0]
 
     txid = tx["hash"]
-    timestamp = int(int(tx["metadata"]["blockTimestamp"], 16))
-    
-    if erc20:
-        amount = Decimal(tx["value"])
-    else:
-        amount = Decimal(tx["value"])
+
+    # FIXED timestamp (ISO format)
+    timestamp = int(
+        datetime.fromisoformat(
+            tx["metadata"]["blockTimestamp"].replace("Z", "+00:00")
+        ).timestamp()
+    )
+
+    amount = Decimal(str(tx["value"]))
 
     return txid, amount, timestamp
 
+
+# ================= TRC20 =================
 
 def check_trc20(address):
     url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20"
@@ -98,16 +114,17 @@ def check_trc20(address):
             return txid, amount, timestamp
 
     return None
-# ================= start =================
+
+
+# ================= COMMANDS =================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 监控机器人已启动\n\n"
-        "添加地址:\n"
         "/addbtc 地址\n"
         "/addeth 地址\n"
         "/adderc20 地址\n"
         "/addtrc20 地址\n\n"
-        "删除地址:\n"
         "/removebtc 地址\n"
         "/removeeth 地址\n"
         "/removeerc20 地址\n"
@@ -116,7 +133,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status"
     )
 
-# ================= COMMANDS =================
 
 async def add_coin(update, context, coin):
     chat_id = update.effective_chat.id
@@ -139,10 +155,8 @@ async def addeth(update, context): await add_coin(update, context, "ETH")
 async def adderc20(update, context): await add_coin(update, context, "ERC20")
 async def addtrc20(update, context): await add_coin(update, context, "TRC20")
 
-# ================= list =================
-def escape_markdown(text):
-    escape_chars = r"_*[]()~`>#+-=|{}.!"
-    return "".join("\\" + c if c in escape_chars else c for c in text)
+
+# ================= LIST =================
 
 async def list_wallet(update, context):
     chat_id = update.effective_chat.id
@@ -162,6 +176,63 @@ async def list_wallet(update, context):
         text,
         parse_mode=ParseMode.MARKDOWN_V2
     )
+
+
+# ================= REMOVE =================
+
+async def remove_coin(update, context, coin):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("格式错误")
+        return
+
+    address = context.args[0]
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
+        (chat_id, coin, address)
+    )
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text("🗑 删除成功")
+
+
+async def removebtc(update, context): await remove_coin(update, context, "BTC")
+async def removeeth(update, context): await remove_coin(update, context, "ETH")
+async def removeerc20(update, context): await remove_coin(update, context, "ERC20")
+async def removetrc20(update, context): await remove_coin(update, context, "TRC20")
+
+
+# ================= STATUS =================
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
+    wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
+
+    text = (
+        "📊 系统状态\n\n"
+        "🤖 Bot: Online\n"
+        f"⏱ 检测间隔: {CHECK_INTERVAL} 秒\n"
+        f"📦 当前监控地址: {len(wallets)} 个"
+    )
+
+    await update.message.reply_text(text)
+
 
 # ================= AUTO LOOP =================
 
@@ -198,39 +269,44 @@ async def auto_check(app):
                 if already_notified(chat_id, txid):
                     continue
 
-                # ===== 显示格式 =====
+                safe_address = escape_markdown(address)
 
                 if coin in ["BTC", "ETH"]:
                     price = get_price(coin)
                     total = amount * price
 
                     text = (
-                        "🚨 出金\n"
+                        "🚨 出金\n\n"
                         f"币种 | {coin}\n"
                         f"数量 | {amount:.6f}\n"
                         f"金额 | {total:,.2f} 美金\n"
-                        f"客户地址 | `{address}`"
+                        f"客户地址 | `{safe_address}`"
                     )
 
                 elif coin == "ERC20":
                     text = (
-                        "🚨 出金\n"
+                        "🚨 出金\n\n"
                         "币种 | ERC20\n"
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
-                        f"客户地址 | `{address}`"
+                        f"客户地址 | `{safe_address}`"
                     )
 
                 elif coin == "TRC20":
                     text = (
-                        "🚨 出金\n"
+                        "🚨 出金\n\n"
                         "币种 | TRC20\n"
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
-                        f"客户地址 | `{address}`"
+                        f"客户地址 | `{safe_address}`"
                     )
 
-                await app.bot.send_message(chat_id, text, parse_mode="Markdown")
+                await app.bot.send_message(
+                    chat_id,
+                    text,
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+
                 mark_notified(chat_id, txid)
 
             except Exception as e:
@@ -296,79 +372,7 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{a[0]}\n"
 
     await update.message.reply_text(text)
-# ================= remove coin =================
-async def remove_coin(update, context, coin):
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
 
-    if not is_admin(chat_id, user_id, MASTER_ID):
-        await update.message.reply_text("⛔ 没有权限")
-        return
-
-    if len(context.args) != 1:
-        await update.message.reply_text("格式错误")
-        return
-
-    address = context.args[0]
-
-    # ลบเฉพาะ coin + address
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
-        (chat_id, coin, address)
-    )
-    conn.commit()
-    conn.close()
-
-    await update.message.reply_text("🗑 删除成功")
-
-
-async def removebtc(update, context): 
-    await remove_coin(update, context, "BTC")
-
-async def removeeth(update, context): 
-    await remove_coin(update, context, "ETH")
-
-async def removeerc20(update, context): 
-    await remove_coin(update, context, "ERC20")
-
-async def removetrc20(update, context): 
-    await remove_coin(update, context, "TRC20")
-
-# ================= STATUS =================
-
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    # 允许 Master 和 Admin 查看
-    if not is_admin(chat_id, user_id, MASTER_ID):
-        await update.message.reply_text("⛔ 没有权限")
-        return
-
-    try:
-        # 数据库测试
-        conn = get_conn()
-        conn.close()
-        db_status = "正常"
-    except:
-        db_status = "异常"
-
-    wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
-    admins = get_admins(chat_id)
-
-    text = (
-        "📊 系统状态\n\n"
-        "🤖 Bot: Online\n"
-        f"⏱ 检测间隔: {CHECK_INTERVAL} 秒\n"
-        f"📦 当前监控地址: {len(wallets)} 个\n"
-        f"👥 当前群管理员: {len(admins)} 个\n"
-        f"🗄 数据库: {db_status}"
-    )
-
-    await update.message.reply_text(text)
 
 # ================= MAIN =================
 
@@ -382,22 +386,23 @@ def main():
     app.add_handler(CommandHandler("addeth", addeth))
     app.add_handler(CommandHandler("adderc20", adderc20))
     app.add_handler(CommandHandler("addtrc20", addtrc20))
-    app.add_handler(CommandHandler("list", list_wallet))
-    app.add_handler(CommandHandler("master", master))
-    app.add_handler(CommandHandler("addadmin", addadmin))
-    app.add_handler(CommandHandler("deladmin", deladmin))
-    app.add_handler(CommandHandler("adminlist", adminlist))
-    app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("removebtc", removebtc))
     app.add_handler(CommandHandler("removeeth", removeeth))
     app.add_handler(CommandHandler("removeerc20", removeerc20))
     app.add_handler(CommandHandler("removetrc20", removetrc20))
+    app.add_handler(CommandHandler("list", list_wallet))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("master", master))
+    app.add_handler(CommandHandler("addadmin", addadmin))
+    app.add_handler(CommandHandler("deladmin", deladmin))
+    app.add_handler(CommandHandler("adminlist", adminlist))
 
     async def post_init(app):
         app.create_task(auto_check(app))
 
     app.post_init = post_init
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
