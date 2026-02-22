@@ -142,13 +142,16 @@ async def add_coin(update, context, coin):
         await update.message.reply_text("⛔ 没有权限")
         return
 
-    if len(context.args) != 1:
-        await update.message.reply_text("格式错误")
+    if len(context.args) < 1:
+        await update.message.reply_text("格式: /addxxx 地址 备注(可选)")
         return
 
-    add_wallet(chat_id, coin, context.args[0])
-    await update.message.reply_text("✅ 添加成功")
+    address = context.args[0]
+    note = " ".join(context.args[1:]) if len(context.args) > 1 else None
 
+    add_wallet(chat_id, coin, address, note)
+
+    await update.message.reply_text("✅ 添加成功")
 
 async def addbtc(update, context): await add_coin(update, context, "BTC")
 async def addeth(update, context): await add_coin(update, context, "ETH")
@@ -160,23 +163,46 @@ async def addtrc20(update, context): await add_coin(update, context, "TRC20")
 
 async def list_wallet(update, context):
     chat_id = update.effective_chat.id
+
     wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
 
     if not wallets:
         await update.message.reply_text("没有 address")
         return
 
-    text = "📋 Wallet List\n\n"
+    # แยกตามเหรียญ
+        grouped = {
+        "BTC": [],
+        "ETH": [],
+        "ERC20": [],
+        "TRC20": []
+    }
 
     for w in wallets:
-        safe_address = escape_markdown(w["address"])
-        text += f"{w['coin']}\n`{safe_address}`\n\n"
+    grouped[w["coin"]].append({
+        "address": w["address"],
+        "note": w.get("note")
+    })
+
+    for coin, addresses in grouped.items():
+        text += f"{coin_icons[coin]} {coin} ({len(addresses)})\n"
+
+        for addr in addresses:
+            safe_address = escape_markdown(addr["address"])
+            note = addr.get("note")
+
+            text += f"`{safe_address}`\n"
+
+        if note:
+            safe_note = escape_markdown(note)
+            text += f"备注 | {safe_note}\n"
+
+        text += "\n"
 
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN_V2
     )
-
 
 # ================= REMOVE =================
 
@@ -244,6 +270,7 @@ async def auto_check(app):
             chat_id = w["chat_id"]
             coin = w["coin"]
             address = w["address"]
+            note = w.get("note")
 
             try:
                 if coin == "BTC":
@@ -271,14 +298,23 @@ async def auto_check(app):
 
                 safe_address = escape_markdown(address)
 
+                # ===== 处理备注 =====
+                note_text = ""
+                if note:
+                    safe_note = escape_markdown(note)
+                    note_text = f"备注 | {safe_note}\n"
+
+                # ===== 生成消息 =====
                 if coin in ["BTC", "ETH"]:
                     price = get_price(coin)
                     total = amount * price
 
                     text = (
                         "🚨 出金\n\n"
+                        f"{note_text}"
                         f"币种 | {coin}\n"
-                        f"数量 | {amount:.6f}\n"
+                        
+                        f"数量 | {amount:.8f}\n"
                         f"金额 | {total:,.2f} 美金\n"
                         f"客户地址 | `{safe_address}`"
                     )
@@ -286,7 +322,9 @@ async def auto_check(app):
                 elif coin == "ERC20":
                     text = (
                         "🚨 出金\n\n"
+                        f"{note_text}"
                         "币种 | ERC20\n"
+                        
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
                         f"客户地址 | `{safe_address}`"
@@ -295,7 +333,9 @@ async def auto_check(app):
                 elif coin == "TRC20":
                     text = (
                         "🚨 出金\n\n"
+                        f"{note_text}"
                         "币种 | TRC20\n"
+                        
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
                         f"客户地址 | `{safe_address}`"
@@ -313,6 +353,7 @@ async def auto_check(app):
                 print("Error:", e)
 
         await asyncio.sleep(CHECK_INTERVAL)
+
 
 # ================= MASTER COMMANDS =================
 
