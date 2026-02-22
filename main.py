@@ -141,15 +141,26 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wallets = get_wallets(update.effective_chat.id)
+    group_id = update.effective_chat.id
+    wallets = get_wallets(group_id)
 
+    # ✅ ถ้าไม่มีรายการ
     if not wallets:
-        await update.message.reply_text("ไม่มีรายการ")
+        await update.message.reply_text(
+            "📭 ไม่มีรายการที่ติดตามในกลุ่มนี้\n\nใช้ /add เพื่อเพิ่มกระเป๋า"
+        )
         return
 
-    text = ""
+    # ✅ ถ้ามีรายการ
+    text = "📋 รายการที่ติดตามในกลุ่มนี้\n\n"
+
     for w in wallets:
-        text += f"{w['id']}) {w['symbol']} | {w['note']}\n{w['address']}\n\n"
+        text += (
+            f"🔹 ID: {w['id']}\n"
+            f"เหรียญ: {w['symbol']}\n"
+            f"หมายเหตุ: {w['note']}\n"
+            f"ที่อยู่: {w['address']}\n\n"
+        )
 
     await update.message.reply_text(text)
 
