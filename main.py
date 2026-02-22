@@ -163,7 +163,6 @@ async def addtrc20(update, context): await add_coin(update, context, "TRC20")
 
 async def list_wallet(update, context):
     chat_id = update.effective_chat.id
-
     wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
 
     if not wallets:
@@ -171,38 +170,47 @@ async def list_wallet(update, context):
         return
 
     # แยกตามเหรียญ
-        grouped = {
+    grouped = {
         "BTC": [],
         "ETH": [],
         "ERC20": [],
         "TRC20": []
     }
 
+    # ✅ ตรงนี้ต้องเยื้อง
     for w in wallets:
-    grouped[w["coin"]].append({
-        "address": w["address"],
-        "note": w.get("note")
-    })
+        grouped[w["coin"]].append({
+            "address": w["address"],
+            "note": w.get("note")
+        })
 
-    for coin, addresses in grouped.items():
-        text += f"{coin_icons[coin]} {coin} ({len(addresses)})\n"
+    text = "📋 当前群监控地址\n\n"
 
-        for addr in addresses:
-            safe_address = escape_markdown(addr["address"])
-            note = addr.get("note")
+    coin_icons = {
+        "BTC": "🟡",
+        "ETH": "🔵",
+        "ERC20": "🟢",
+        "TRC20": "🔴"
+    }
 
+    for coin, items in grouped.items():
+        text += f"{coin_icons[coin]} {coin} ({len(items)})\n"
+
+        for item in items:
+            safe_address = escape_markdown(item["address"])
             text += f"`{safe_address}`\n"
 
-        if note:
-            safe_note = escape_markdown(note)
-            text += f"备注 | {safe_note}\n"
+            if item.get("note"):
+                safe_note = escape_markdown(item["note"])
+                text += f"备注 | {safe_note}\n"
 
-        text += "\n"
+            text += "\n"
 
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN_V2
     )
+
 
 # ================= REMOVE =================
 
