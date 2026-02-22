@@ -45,6 +45,7 @@ def init_db():
                 coin VARCHAR(20) NOT NULL,
                 address TEXT NOT NULL,
                 note TEXT,
+                last_txid TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(chat_id, address)
             );
