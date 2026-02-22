@@ -139,7 +139,7 @@ async def addeth(update, context): await add_coin(update, context, "ETH")
 async def adderc20(update, context): await add_coin(update, context, "ERC20")
 async def addtrc20(update, context): await add_coin(update, context, "TRC20")
 
-
+# ================= list =================
 async def list_wallet(update, context):
     chat_id = update.effective_chat.id
     wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
@@ -148,11 +148,16 @@ async def list_wallet(update, context):
         await update.message.reply_text("没有 address")
         return
 
-    text = "📋 Wallet List\n"
-    for w in wallets:
-        text += f"{w['coin']} → {w['address']}\n"
+    text = "📋 Wallet List\n\n"
 
-    await update.message.reply_text(text)
+    for w in wallets:
+        safe_address = escape_markdown(w["address"])
+        text += f"{w['coin']}\n`{safe_address}`\n\n"
+
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN_V2
+    )
 
 # ================= AUTO LOOP =================
 
