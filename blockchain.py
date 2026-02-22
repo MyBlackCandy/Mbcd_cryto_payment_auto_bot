@@ -36,19 +36,45 @@ def get_latest_tx(chain, address):
 
     if chain in ["ETH", "USDT-ERC20"]:
 
-        action = "tokentx" if chain == "USDT-ERC20" else "txlist"
+        if not ETHERSCAN_API:
+            return None, None
 
-        r = requests.get(
-            "https://api.etherscan.io/api",
-            params={
+        try:
+            base_url = "https://api.etherscan.io/api"
+
+            params = {
+                "chainid": "1",
                 "module": "account",
-                "action": action,
                 "address": address,
                 "sort": "desc",
                 "apikey": ETHERSCAN_API
-            },
-            timeout=10
-        ).json()
+            }
+
+            if chain == "ETH":
+                params["action"] = "txlist"
+            else:
+                params["action"] = "tokentx"
+
+            r = requests.get(base_url, params=params, timeout=10).json()
+
+            if r.get("status") != "1":
+                print("ETH V2 ERROR:", r)
+                return None, None
+
+            tx = r["result"][0]
+
+            value = Decimal(tx["value"])
+
+            if chain == "ETH":
+                amount = value / Decimal(1e18)
+            else:
+                amount = value / Decimal(1e6)
+
+            return tx["hash"], amount
+
+        except Exception as e:
+            print("ETH V2 EXCEPTION:", e)
+            return None, None
 
     # ✅ ตรวจสอบให้แน่ใจว่า result เป็น list
     if r.get("status") == "1" and isinstance(r.get("result"), list) and r["result"]:
