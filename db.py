@@ -17,6 +17,7 @@ def init_db():
         chat_id BIGINT NOT NULL,
         coin VARCHAR(20) NOT NULL,
         address TEXT NOT NULL,
+        note TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(chat_id, address)
     );
@@ -44,14 +45,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-def add_wallet(chat_id, coin, address):
+def add_wallet(chat_id, coin, address, note=None):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO wallets (chat_id, coin, address)
-        VALUES (%s,%s,%s)
-        ON CONFLICT DO NOTHING
-    """, (chat_id, coin, address))
+        INSERT INTO wallets (chat_id, coin, address, note)
+        VALUES (%s,%s,%s,%s)
+        ON CONFLICT (chat_id, address)
+        DO UPDATE SET note = EXCLUDED.note
+    """, (chat_id, coin, address, note))
     conn.commit()
     conn.close()
 
