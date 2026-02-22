@@ -423,6 +423,26 @@ async def auto_check(app):
 
         await asyncio.sleep(CHECK_INTERVAL)
 
+
+async def startup(app):
+    asyncio.create_task(auto_check(app))
+
+async def startup(app):
+
+    print("🚀 Bot started successfully")
+
+    # ส่งข้อความหา Master
+    if MASTER_ID:
+        try:
+            await app.bot.send_message(
+                MASTER_ID,
+                "🤖 机器人已启动\n✅ 系统已准备好开始监控"
+            )
+        except Exception as e:
+            print("Startup notify error:", e)
+
+    asyncio.create_task(auto_check(app))
+
 # ================== MAIN ==================
 def main():
     init_pool()
