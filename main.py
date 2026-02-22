@@ -17,6 +17,7 @@ CHECK_INTERVAL = 30
 
 # ================= PRICE =================
 
+
 def get_price(coin):
     coin_map = {
         "BTC": "bitcoin",
@@ -97,6 +98,23 @@ def check_trc20(address):
             return txid, amount, timestamp
 
     return None
+# ================= start =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 监控机器人已启动\n\n"
+        "添加地址:\n"
+        "/addbtc 地址\n"
+        "/addeth 地址\n"
+        "/adderc20 地址\n"
+        "/addtrc20 地址\n\n"
+        "删除地址:\n"
+        "/removebtc 地址\n"
+        "/removeeth 地址\n"
+        "/removeerc20 地址\n"
+        "/removetrc20 地址\n\n"
+        "/list\n"
+        "/status"
+    )
 
 # ================= COMMANDS =================
 
@@ -269,6 +287,45 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{a[0]}\n"
 
     await update.message.reply_text(text)
+# ================= remove coin =================
+async def remove_coin(update, context, coin):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("格式错误")
+        return
+
+    address = context.args[0]
+
+    # ลบเฉพาะ coin + address
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
+        (chat_id, coin, address)
+    )
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text("🗑 删除成功")
+
+
+async def removebtc(update, context): 
+    await remove_coin(update, context, "BTC")
+
+async def removeeth(update, context): 
+    await remove_coin(update, context, "ETH")
+
+async def removeerc20(update, context): 
+    await remove_coin(update, context, "ERC20")
+
+async def removetrc20(update, context): 
+    await remove_coin(update, context, "TRC20")
 
 # ================= STATUS =================
 
@@ -311,6 +368,7 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("addbtc", addbtc))
     app.add_handler(CommandHandler("addeth", addeth))
     app.add_handler(CommandHandler("adderc20", adderc20))
@@ -321,6 +379,10 @@ def main():
     app.add_handler(CommandHandler("deladmin", deladmin))
     app.add_handler(CommandHandler("adminlist", adminlist))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("removebtc", removebtc))
+    app.add_handler(CommandHandler("removeeth", removeeth))
+    app.add_handler(CommandHandler("removeerc20", removeerc20))
+    app.add_handler(CommandHandler("removetrc20", removetrc20))
 
     async def post_init(app):
         app.create_task(auto_check(app))
