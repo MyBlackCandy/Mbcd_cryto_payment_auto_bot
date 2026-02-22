@@ -44,36 +44,50 @@ async def list_cmd(update, context):
 
     await update.message.reply_text(text)
 
-async def check_transactions(context: ContextTypes.DEFAULT_TYPE):
+
+
+async def check_transactions(context):
+    print("=== CHECK RUNNING ===")
+
     wallets = get_all_wallets()
+    print("Wallets:", wallets)
 
     for w in wallets:
+        print("Checking:", w["chain"], w["address"])
+
         tx_hash, amount = get_latest_tx(w["chain"], w["address"])
+        print("TX:", tx_hash, amount)
+        
+#async def check_transactions(context: ContextTypes.DEFAULT_TYPE):
+#    wallets = get_all_wallets()
 
-        if not tx_hash:
-            continue
+#    for w in wallets:
+#        tx_hash, amount = get_latest_tx(w["chain"], w["address"])
 
-        if tx_hash == w["last_tx_hash"]:
-            continue
+ #       if not tx_hash:
+ #           continue
+#
+ #       if tx_hash == w["last_tx_hash"]:
+ #           continue
 
-        price = get_price(w["chain"])
-        usd = amount * price if amount else Decimal(0)
+ #       price = get_price(w["chain"])
+   #     usd = amount * price if amount else Decimal(0)
 
-        msg = f"""
-🔔 {w['chain']} ALERT
-จำนวน: {amount}
-≈ ${usd:.2f}
+ #       msg = f"""
+#🔔 {w['chain']} ALERT
+#จำนวน: {amount}
+#≈ ${usd:.2f}
 
-TX:
-{tx_hash}
-"""
+#TX:
+#{tx_hash}
+#"""
+#
+#        await context.bot.send_message(
+#            chat_id=w["chat_id"],
+#            text=msg.strip()
+#        )
 
-        await context.bot.send_message(
-            chat_id=w["chat_id"],
-            text=msg.strip()
-        )
-
-        update_last_tx(w["id"], tx_hash)
+#        update_last_tx(w["id"], tx_hash)
 
 def main():
     init_db()
