@@ -178,7 +178,7 @@ async def auto_check(app):
                     total = amount * price
 
                     text = (
-                        "🚨 转出交易\n"
+                        "🚨 出金\n"
                         f"币种 | {coin}\n"
                         f"数量 | {amount:.6f}\n"
                         f"金额 | {total:,.2f} 美金\n"
@@ -187,7 +187,7 @@ async def auto_check(app):
 
                 elif coin == "ERC20":
                     text = (
-                        "🚨 转出交易\n"
+                        "🚨 出金\n"
                         "币种 | ERC20\n"
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
@@ -196,7 +196,7 @@ async def auto_check(app):
 
                 elif coin == "TRC20":
                     text = (
-                        "🚨 转出交易\n"
+                        "🚨 出金\n"
                         "币种 | TRC20\n"
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
