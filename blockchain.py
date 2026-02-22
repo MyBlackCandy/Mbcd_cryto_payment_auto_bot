@@ -35,28 +35,37 @@ def get_latest_tx(chain, address):
             return tx["tx_hash"], Decimal(tx["value"]) / Decimal(1e8)
 
     if chain in ["ETH", "USDT-ERC20"]:
-        action = "tokentx" if chain == "USDT-ERC20" else "txlist"
 
-        r = requests.get(
-            "https://api.etherscan.io/api",
-            params={
-                "module": "account",
-                "action": action,
-                "address": address,
-                "sort": "desc",
-                "apikey": ETHERSCAN_API
-            },
-            timeout=10
-        ).json()
+    action = "tokentx" if chain == "USDT-ERC20" else "txlist"
 
-        tx = r.get("result", [None])[0]
-        if tx:
-            value = Decimal(tx["value"])
-            if chain == "ETH":
-                amount = value / Decimal(1e18)
-            else:
-                amount = value / Decimal(1e6)
-            return tx["hash"], amount
+    r = requests.get(
+        "https://api.etherscan.io/api",
+        params={
+            "module": "account",
+            "action": action,
+            "address": address,
+            "sort": "desc",
+            "apikey": ETHERSCAN_API
+        },
+        timeout=10
+    ).json()
+
+    # ✅ ตรวจสอบให้แน่ใจว่า result เป็น list
+    if r.get("status") == "1" and isinstance(r.get("result"), list) and r["result"]:
+        tx = r["result"][0]
+
+        value = Decimal(tx["value"])
+
+        if chain == "ETH":
+            amount = value / Decimal(1e18)
+        else:
+            amount = value / Decimal(1e6)
+
+        return tx["hash"], amount
+
+    else:
+        print("ETH API ERROR:", r)
+        return None, None
 
     if chain == "SOL":
         payload = {
