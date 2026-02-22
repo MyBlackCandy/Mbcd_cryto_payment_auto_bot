@@ -31,15 +31,11 @@ print("MASTER_ID:", MASTER_ID)
 print("ALCHEMY_KEY loaded:", bool(ALCHEMY_KEY))
 
 # ================== UTIL ==================
-def escape_markdown(text):
-    escape_chars = r"_*[]()~`>#+-=|{}.!"
+def escape_md(text):
+    if not text:
+        return ""
+    escape_chars = r"_*[]()~`>#+-=|{}.!`"
     return "".join("\\" + c if c in escape_chars else c for c in text)
-
-def get_price(coin):
-    coin_map = {"BTC": "bitcoin", "ETH": "ethereum"}
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_map[coin]}&vs_currencies=usd"
-    data = requests.get(url).json()
-    return Decimal(str(list(data.values())[0]["usd"]))
 
 # ================== CHAIN ==================
 def check_btc(address):
@@ -53,12 +49,13 @@ def check_btc(address):
             for vin in tx["vin"]:
                 if vin.get("prevout", {}).get("scriptpubkey_address") == address:
                     amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
-                    return tx["txid"], amount, tx["status"]["block_time"]
+                    return tx["txid"], amount
     except:
         return None
     return None
 
-def check_eth_alchemy(address, erc20=False):
+
+def check_eth(address, erc20=False):
     if not ALCHEMY_KEY:
         return None
 
@@ -87,36 +84,60 @@ def check_eth_alchemy(address, erc20=False):
             return None
 
         tx = transfers[0]
-        txid = tx["hash"]
-        timestamp = int(datetime.fromisoformat(
-            tx["metadata"]["blockTimestamp"].replace("Z", "+00:00")
-        ).timestamp())
-        amount = Decimal(str(tx["value"]))
-
-        return txid, amount, timestamp
+        return tx["hash"], Decimal(str(tx["value"]))
     except:
         return None
+
 
 def check_trc20(address):
     try:
         url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20"
         res = requests.get(url, timeout=10).json()
-        if "data" not in res:
-            return None
 
-        for tx in res["data"][:5]:
+        for tx in res.get("data", [])[:5]:
             if tx["from"].lower() == address.lower():
                 return (
                     tx["transaction_id"],
-                    Decimal(tx["value"]) / Decimal(10**6),
-                    int(tx["block_timestamp"] / 1000)
+                    Decimal(tx["value"]) / Decimal(10**6)
                 )
     except:
         return None
     return None
 
+
+
+# ================== START ==================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    text = (
+        "🤖 监控机器人已启动\n\n"
+        f"🆔 群ID: `{chat_id}`\n"
+        f"👤 你的ID: `{user_id}`\n\n"
+        "📌 使用方法:\n"
+        "/add 添加地址\n"
+        "/remove 删除地址\n"
+        "/list 查看地址\n"
+        "/test 系统检测\n\n"
+        "👑 管理命令:\n"
+        "/addadmin 用户ID\n"
+        "/deladmin 用户ID\n"
+        "/adminlist\n"
+        "/master"
+    )
+
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+
 # ================== ADD FLOW ==================
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_chat.id,
+                    update.effective_user.id,
+                    MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
     keyboard = [
         [InlineKeyboardButton("🟡 BTC", callback_data="coin_BTC"),
          InlineKeyboardButton("🔵 ETH", callback_data="coin_ETH")],
@@ -125,148 +146,121 @@ async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ 取消", callback_data="add_cancel")]
     ]
 
-    context.user_data["add_step"] = "select_coin"
+    context.user_data.clear()
+    context.user_data["step"] = "coin"
 
     await update.message.reply_text(
         "请选择币种",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def add_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def add_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    context.user_data["add_coin"] = query.data.replace("coin_", "")
-    context.user_data["add_step"] = "address"
+    if query.data == "add_cancel":
+        context.user_data.clear()
+        await query.message.reply_text("❌ 已取消")
+        return
 
-    keyboard = [[InlineKeyboardButton("❌ 取消", callback_data="add_cancel")]]
+    context.user_data["coin"] = query.data.replace("coin_", "")
+    context.user_data["step"] = "address"
 
-    await query.message.reply_text(
-        "请输入地址",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.message.reply_text("请输入地址")
+
 
 async def add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if "add_step" not in context.user_data:
+    if "step" not in context.user_data:
         return
 
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    if not is_admin(chat_id, user_id, MASTER_ID):
-        await update.message.reply_text("⛔ 没有权限")
-        context.user_data.clear()
-        return
-
-    step = context.user_data["add_step"]
+    step = context.user_data["step"]
 
     if step == "address":
-        context.user_data["add_address"] = update.message.text.strip()
-        context.user_data["add_step"] = "note"
+        context.user_data["address"] = update.message.text.strip()
+        context.user_data["step"] = "note"
+        await update.message.reply_text("请输入备注 (发送 - 跳过)")
+        return
 
-        keyboard = [[InlineKeyboardButton("❌ 取消", callback_data="add_cancel")]]
-
-        await update.message.reply_text(
-            "请输入备注 (发送 - 跳过)",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
+    if step == "note":
         note = update.message.text.strip()
         if note == "-":
             note = None
 
         add_wallet(
-            chat_id,
-            context.user_data["add_coin"],
-            context.user_data["add_address"],
+            update.effective_chat.id,
+            context.user_data["coin"],
+            context.user_data["address"],
             note
         )
 
         await update.message.reply_text("✅ 添加成功")
         context.user_data.clear()
 
-async def add_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    await query.message.reply_text("❌ 已取消")
 
-# ================== AUTO CHECK ==================
-async def auto_check(app):
-    print("Auto check started")
+# ================== LIST ==================
+async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
 
-    while True:
-        wallets = get_wallets()
+    if not wallets:
+        await update.message.reply_text("没有 address")
+        return
 
-        for w in wallets:
-            chat_id = w["chat_id"]
-            coin = w["coin"]
-            address = w["address"]
-            note = w.get("note")
+    grouped = {}
+    for w in wallets:
+        grouped.setdefault(w["coin"], []).append(w)
 
-            if coin == "BTC":
-                result = check_btc(address)
-            elif coin == "ETH":
-                result = check_eth_alchemy(address)
-            elif coin == "ERC20":
-                result = check_eth_alchemy(address, True)
-            elif coin == "TRC20":
-                result = check_trc20(address)
-            else:
-                continue
+    coin_order = ["BTC", "ETH", "ERC20", "TRC20"]
 
-            if not result:
-                continue
+    text = "📋 当前群监控地址\n\n"
 
-            txid, amount, _ = result
+    for coin in coin_order:
+        if coin not in grouped:
+            continue
 
-            if already_notified(chat_id, txid):
-                continue
+        text += f"{coin}\n"
 
-            note_text = f"备注 | {escape_markdown(note)}\n" if note else ""
+        for w in grouped[coin]:
+            note = w.get("note") or "未备注"
+            text += f"{note} | `{w['address']}`\n"
 
-            text = (
-                f"🚨 出金\n\n"
-                f"币种 | {coin}\n"
-                f"{note_text}"
-                f"数量 | {amount}\n"
-                f"客户地址 | `{escape_markdown(address)}`"
-            )
+        text += "\n"
 
-            await app.bot.send_message(
-                chat_id,
-                text,
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
-            mark_notified(chat_id, txid)
 
-        await asyncio.sleep(CHECK_INTERVAL)
-
-# ================== remove FLOW ==================
+# ================== REMOVE ==================
 async def remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_chat.id, update.effective_user.id, MASTER_ID):
+    if not is_admin(update.effective_chat.id,
+                    update.effective_user.id,
+                    MASTER_ID):
         await update.message.reply_text("⛔ 没有权限")
         return
 
     keyboard = [
-        [InlineKeyboardButton("🟡 BTC", callback_data="rmcoin_BTC")],
-        [InlineKeyboardButton("🔵 ETH", callback_data="rmcoin_ETH")],
-        [InlineKeyboardButton("🟢 ERC20", callback_data="rmcoin_ERC20")],
-        [InlineKeyboardButton("🔴 TRC20", callback_data="rmcoin_TRC20")],
-        [InlineKeyboardButton("❌ 取消", callback_data="rm_cancel")]
+        [InlineKeyboardButton("BTC", callback_data="rm_BTC")],
+        [InlineKeyboardButton("ETH", callback_data="rm_ETH")],
+        [InlineKeyboardButton("ERC20", callback_data="rm_ERC20")],
+        [InlineKeyboardButton("TRC20", callback_data="rm_TRC20")],
+        [InlineKeyboardButton("❌ 取消", callback_data="add_cancel")]
     ]
 
     await update.message.reply_text(
-        "请选择币种",
+        "选择币种",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def remove_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def remove_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    coin = query.data.replace("rmcoin_", "")
+    if query.data == "add_cancel":
+        await query.message.reply_text("❌ 已取消")
+        return
+
+    coin = query.data.replace("rm_", "")
     chat_id = query.message.chat.id
 
     wallets = [
@@ -279,22 +273,20 @@ async def remove_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     keyboard = []
-
     for w in wallets:
-        short = w["address"][:10] + "..."
         keyboard.append([
             InlineKeyboardButton(
-                short,
+                w["address"][:10] + "...",
                 callback_data=f"rmaddr_{coin}_{w['address']}"
             )
         ])
 
-    keyboard.append([InlineKeyboardButton("❌ 取消", callback_data="rm_cancel")])
-
     await query.message.reply_text(
-        "请选择要删除的地址",
+        "选择要删除的地址",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+
 async def remove_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -312,10 +304,61 @@ async def remove_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.reply_text("🗑 删除成功")
 
-async def remove_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("❌ 已取消")
+
+# ================== AUTO CHECK ==================
+async def auto_check(app):
+    print("Auto check started")
+
+    while True:
+        wallets = get_wallets()
+
+        for w in wallets:
+            chat_id = w["chat_id"]
+            coin = w["coin"]
+            address = w["address"]
+            note = w.get("note")
+
+            if coin == "BTC":
+                result = check_btc(address)
+            elif coin == "ETH":
+                result = check_eth(address)
+            elif coin == "ERC20":
+                result = check_eth(address, True)
+            elif coin == "TRC20":
+                result = check_trc20(address)
+            else:
+                continue
+
+            if not result:
+                continue
+
+            txid, amount = result
+
+            if already_notified(chat_id, txid):
+                continue
+
+            note_text = f"备注 | {note}\n" if note else ""
+
+            text = (
+                f"🚨 出金\n\n"
+                f"币种 | {coin}\n"
+                f"{note_text}"
+                f"数量 | {amount}\n"
+                f"客户地址 | `{address}`"
+            )
+
+            await app.bot.send_message(
+                chat_id,
+                text,
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+            mark_notified(chat_id, txid)
+
+        await asyncio.sleep(CHECK_INTERVAL)
+
+
+
 
 # ================== TEST ==================
 async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -342,53 +385,6 @@ async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"🤖 Bot: ❌ {e}\n"
 
     await update.message.reply_text(text)
-
-
-# ================== list ==================
-async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        chat_id = update.effective_chat.id
-        wallets = get_wallets()
-
-        # กรองเฉพาะกลุ่มนี้
-        wallets = [w for w in wallets if w["chat_id"] == chat_id]
-
-        if not wallets:
-            await update.message.reply_text("没有 address")
-            return
-
-        # เรียงเหรียญตามลำดับ
-        coin_order = ["BTC", "ETH", "ERC20", "TRC20"]
-
-        grouped = {}
-        for w in wallets:
-            grouped.setdefault(w["coin"], []).append(w)
-
-        text = "📋 当前群监控地址\n\n"
-
-        for coin in coin_order:
-            if coin not in grouped:
-                continue
-
-            text += f"{coin}\n"
-
-            for w in grouped[coin]:
-                note = w.get("note") or "未备注"
-                address = w["address"]
-
-                # ไม่ต้อง escape address เพราะใช้ backtick
-                text += f"{note} | `{address}`\n"
-
-            text += "\n"
-
-        await update.message.reply_text(
-            text,
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-    except Exception as e:
-        print("LIST ERROR:", e)
-        await update.message.reply_text("list 出错")
 
 
 # ================== master ==================
@@ -458,28 +454,7 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
     
-# ================== START ==================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
 
-    text = (
-        "🤖 监控机器人已启动\n\n"
-        f"🆔 群ID: `{chat_id}`\n"
-        f"👤 你的ID: `{user_id}`\n\n"
-        "📌 使用方法:\n"
-        "/add 添加地址\n"
-        "/remove 删除地址\n"
-        "/list 查看地址\n"
-        "/test 系统检测\n\n"
-        "👑 管理命令:\n"
-        "/addadmin 用户ID\n"
-        "/deladmin 用户ID\n"
-        "/adminlist\n"
-        "/master"
-    )
-
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     
 # ================== MAIN ==================
 def main():
