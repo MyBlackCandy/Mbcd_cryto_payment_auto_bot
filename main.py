@@ -457,6 +457,7 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
 # ================== MAIN ==================
+# ================== MAIN ==================
 def main():
     print("Starting application...")
 
@@ -464,29 +465,28 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
+    # ADD FLOW
     app.add_handler(CommandHandler("add", add_start))
-    app.add_handler(CallbackQueryHandler(add_select_coin, pattern="^coin_"))
+    app.add_handler(CallbackQueryHandler(add_select, pattern="^coin_"))
     app.add_handler(CallbackQueryHandler(add_cancel, pattern="^add_cancel$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_flow))
+
+    # REMOVE FLOW
+    app.add_handler(CommandHandler("remove", remove_start))
+    app.add_handler(CallbackQueryHandler(remove_select, pattern="^rm_"))
+    app.add_handler(CallbackQueryHandler(remove_confirm, pattern="^rmaddr_"))
+
+    # BASIC COMMANDS
+    app.add_handler(CommandHandler("list", list_wallet))
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("test", test))
 
-    app.add_handler(CommandHandler("remove", remove_start))
-    app.add_handler(CallbackQueryHandler(remove_select_coin, pattern="^rmcoin_"))
-    app.add_handler(CallbackQueryHandler(remove_confirm, pattern="^rmaddr_"))
-    app.add_handler(CallbackQueryHandler(remove_cancel, pattern="^rm_cancel$"))
-
-    app.add_handler(CommandHandler("list", list_wallet))
-
-
-    app.add_handler(CommandHandler("start", start))
+    # ADMIN
     app.add_handler(CommandHandler("addadmin", addadmin))
     app.add_handler(CommandHandler("deladmin", deladmin))
     app.add_handler(CommandHandler("adminlist", adminlist))
     app.add_handler(CommandHandler("master", master))
 
-    app.add_handler(CommandHandler("start", start))
-
-    
     async def startup(app):
         print("Bot polling started")
         asyncio.create_task(auto_check(app))
@@ -494,6 +494,9 @@ def main():
     app.post_init = startup
 
     app.run_polling()
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
