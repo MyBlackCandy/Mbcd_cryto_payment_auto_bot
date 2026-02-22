@@ -2,7 +2,6 @@ import os
 import asyncio
 import requests
 from decimal import Decimal
-from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from db import *
@@ -39,26 +38,36 @@ def check_btc(address):
                 return tx["txid"], amount, tx["status"]["block_time"]
     return None
 
-def check_eth(address, token=False):
-    action = "tokentx" if token else "txlist"
+
+def check_eth(address, erc20=False):
+    action = "tokentx" if erc20 else "txlist"
     url = (
         f"https://api.etherscan.io/api?"
         f"module=account&action={action}"
         f"&address={address}&sort=desc&apikey={ETHERSCAN_KEY}"
     )
     res = requests.get(url).json()
+
     if res["status"] != "1":
         return None
 
     for tx in res["result"][:5]:
         if tx["from"].lower() == address.lower():
-            amount = Decimal(tx["value"]) / Decimal(10**18)
+
+            if erc20:
+                amount = Decimal(tx["value"]) / Decimal(10**6)
+            else:
+                amount = Decimal(tx["value"]) / Decimal(10**18)
+
             return tx["hash"], amount, int(tx["timeStamp"])
+
     return None
+
 
 def check_trc20(address):
     url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20"
     res = requests.get(url).json()
+
     if "data" not in res:
         return None
 
@@ -68,26 +77,10 @@ def check_trc20(address):
             amount = Decimal(tx["value"]) / Decimal(10**6)
             timestamp = int(tx["block_timestamp"] / 1000)
             return txid, amount, timestamp
+
     return None
 
-# ================= COMMANDS (双语命令) =================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 加密货币监控机器人已启动\n\n"
-        "📌 添加地址:\n"
-        "/addbtc 地址\n"
-        "/addeth 地址\n"
-        "/adderc20 地址\n"
-        "/addtrc20 地址\n\n"
-        "📌 管理:\n"
-        "/list 查看列表\n"
-        "/remove 地址 删除\n\n"
-        "👑 仅 Master:\n"
-        "/addadmin 用户ID\n"
-        "/deladmin 用户ID\n"
-        "/adminlist"
-    )
+# ================= COMMANDS =================
 
 async def add_coin(update, context, coin):
     chat_id = update.effective_chat.id
@@ -98,64 +91,31 @@ async def add_coin(update, context, coin):
         return
 
     if len(context.args) != 1:
-        await update.message.reply_text("格式错误 / 格式不正确")
+        await update.message.reply_text("格式错误")
         return
 
     add_wallet(chat_id, coin, context.args[0])
     await update.message.reply_text("✅ 添加成功")
 
+
 async def addbtc(update, context): await add_coin(update, context, "BTC")
 async def addeth(update, context): await add_coin(update, context, "ETH")
-async def adderc20(update, context): await add_coin(update, context, "USDT")
+async def adderc20(update, context): await add_coin(update, context, "ERC20")
 async def addtrc20(update, context): await add_coin(update, context, "TRC20")
 
-async def remove(update, context):
-    if not is_admin(update.effective_chat.id,
-                    update.effective_user.id,
-                    MASTER_ID):
-        await update.message.reply_text("⛔ 没有权限")
-        return
-
-    remove_wallet(update.effective_chat.id, context.args[0])
-    await update.message.reply_text("🗑 删除成功")
 
 async def list_wallet(update, context):
     chat_id = update.effective_chat.id
     wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
 
     if not wallets:
-        await update.message.reply_text("没有地址")
+        await update.message.reply_text("没有 address")
         return
 
-    text = "📋 钱包列表:\n"
+    text = "📋 Wallet List\n"
     for w in wallets:
         text += f"{w['coin']} → {w['address']}\n"
-    await update.message.reply_text(text)
 
-# MASTER ONLY
-
-async def addadmin(update, context):
-    if update.effective_user.id != MASTER_ID:
-        return
-    add_admin(update.effective_chat.id, int(context.args[0]))
-    await update.message.reply_text("👑 添加管理员成功")
-
-async def deladmin(update, context):
-    if update.effective_user.id != MASTER_ID:
-        return
-    remove_admin(update.effective_chat.id, int(context.args[0]))
-    await update.message.reply_text("🗑 删除管理员成功")
-
-async def adminlist(update, context):
-    if update.effective_user.id != MASTER_ID:
-        return
-    admins = get_admins(update.effective_chat.id)
-    if not admins:
-        await update.message.reply_text("没有管理员")
-        return
-    text = "👑 管理员列表:\n"
-    for a in admins:
-        text += f"{a[0]}\n"
     await update.message.reply_text(text)
 
 # ================= AUTO LOOP =================
@@ -172,12 +132,16 @@ async def auto_check(app):
             try:
                 if coin == "BTC":
                     result = check_btc(address)
+
                 elif coin == "ETH":
                     result = check_eth(address)
-                elif coin == "USDT":
-                    result = check_eth(address, token=True)
+
+                elif coin == "ERC20":
+                    result = check_eth(address, erc20=True)
+
                 elif coin == "TRC20":
                     result = check_trc20(address)
+
                 else:
                     continue
 
@@ -189,23 +153,36 @@ async def auto_check(app):
                 if already_notified(chat_id, txid):
                     continue
 
+                # ===== 显示格式 =====
+
                 if coin in ["BTC", "ETH"]:
                     price = get_price(coin)
                     total = amount * price
+
                     text = (
-                        f"🚨 转出交易\n\n"
-                        f"Coin: {coin}\n"
-                        f"数量: {amount:.6f}\n"
-                        f"价格: ${price:,.2f}\n"
-                        f"总额: ${total:,.2f}\n\n"
-                        f"时间: {datetime.utcfromtimestamp(timestamp)}"
+                        "🚨 转出交易\n\n"
+                        f"币种 | {coin}\n"
+                        f"数量 | {amount:.6f}\n"
+                        f"金额 | {total:,.2f} 美金\n"
+                        f"客户地址 | {address}"
                     )
-                else:
+
+                elif coin == "ERC20":
                     text = (
-                        f"🚨 转出交易\n\n"
-                        f"Coin: {coin}\n"
-                        f"数量: {amount:.6f}\n\n"
-                        f"时间: {datetime.utcfromtimestamp(timestamp)}"
+                        "🚨 转出交易\n\n"
+                        "币种 | ERC20\n"
+                        f"数量 | {amount:.2f}\n"
+                        f"金额 | {amount:,.2f} 美金\n"
+                        f"客户地址 | {address}"
+                    )
+
+                elif coin == "TRC20":
+                    text = (
+                        "🚨 转出交易\n\n"
+                        "币种 | TRC20\n"
+                        f"数量 | {amount:.2f}\n"
+                        f"金额 | {amount:,.2f} 美金\n"
+                        f"客户地址 | {address}"
                     )
 
                 await app.bot.send_message(chat_id, text)
@@ -216,22 +193,116 @@ async def auto_check(app):
 
         await asyncio.sleep(CHECK_INTERVAL)
 
+# ================= MASTER COMMANDS =================
+
+async def master(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        return
+
+    await update.message.reply_text(
+        "👑 Master 控制面板\n\n"
+        "/addadmin 用户ID\n"
+        "/deladmin 用户ID\n"
+        "/adminlist\n\n"
+        "你拥有所有权限"
+    )
+
+
+async def addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        await update.message.reply_text("⛔ 只有 Master 可以使用")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("格式: /addadmin 用户ID")
+        return
+
+    user_id = int(context.args[0])
+    add_admin(update.effective_chat.id, user_id)
+    await update.message.reply_text("✅ 添加管理员成功")
+
+
+async def deladmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        await update.message.reply_text("⛔ 只有 Master 可以使用")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("格式: /deladmin 用户ID")
+        return
+
+    user_id = int(context.args[0])
+    remove_admin(update.effective_chat.id, user_id)
+    await update.message.reply_text("🗑 删除管理员成功")
+
+
+async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        return
+
+    admins = get_admins(update.effective_chat.id)
+
+    if not admins:
+        await update.message.reply_text("没有管理员")
+        return
+
+    text = "👑 管理员列表:\n"
+    for a in admins:
+        text += f"{a[0]}\n"
+
+    await update.message.reply_text(text)
+
+# ================= STATUS =================
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    # 允许 Master 和 Admin 查看
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
+    try:
+        # 数据库测试
+        conn = get_conn()
+        conn.close()
+        db_status = "正常"
+    except:
+        db_status = "异常"
+
+    wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
+    admins = get_admins(chat_id)
+
+    text = (
+        "📊 系统状态\n\n"
+        "🤖 Bot: Online\n"
+        f"⏱ 检测间隔: {CHECK_INTERVAL} 秒\n"
+        f"📦 当前监控地址: {len(wallets)} 个\n"
+        f"👥 当前群管理员: {len(admins)} 个\n"
+        f"🗄 数据库: {db_status}"
+    )
+
+    await update.message.reply_text(text)
+
 # ================= MAIN =================
 
 def main():
     init_db()
+
     app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("addbtc", addbtc))
     app.add_handler(CommandHandler("addeth", addeth))
     app.add_handler(CommandHandler("adderc20", adderc20))
     app.add_handler(CommandHandler("addtrc20", addtrc20))
-    app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("list", list_wallet))
+    app.add_handler(CommandHandler("master", master))
     app.add_handler(CommandHandler("addadmin", addadmin))
     app.add_handler(CommandHandler("deladmin", deladmin))
     app.add_handler(CommandHandler("adminlist", adminlist))
+    app.add_handler(CommandHandler("status", status))
 
     async def post_init(app):
         app.create_task(auto_check(app))
