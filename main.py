@@ -187,7 +187,16 @@ async def auto_check(app):
 
 def main():
     init_db()
-    app = Application.builder().token(TOKEN).build()
+
+    async def post_init(app):
+        app.create_task(auto_check(app))
+
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("addbtc", addbtc))
     app.add_handler(CommandHandler("addeth", addeth))
@@ -197,8 +206,4 @@ def main():
     app.add_handler(CommandHandler("list", list_wallet))
     app.add_handler(CommandHandler("setadmin", setadmin))
 
-    asyncio.create_task(auto_check(app))
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
