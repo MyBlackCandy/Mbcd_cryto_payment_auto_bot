@@ -5,7 +5,6 @@ from decimal import Decimal
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-
 from db import *
 
 TOKEN = os.getenv("TOKEN")
@@ -20,14 +19,13 @@ def get_price(coin):
     coin_map = {
         "BTC": "bitcoin",
         "ETH": "ethereum",
-        "USDT": "tether",
-        "TRC20": "tether"
+        "TRX": "tron"
     }
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_map[coin]}&vs_currencies=usd"
     data = requests.get(url).json()
     return Decimal(str(list(data.values())[0]["usd"]))
 
-# ================= BTC =================
+# ================= BLOCKCHAIN =================
 
 def check_btc(address):
     data = requests.get(
@@ -40,8 +38,6 @@ def check_btc(address):
                 amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
                 return tx["txid"], amount, tx["status"]["block_time"]
     return None
-
-# ================= ETH / ERC20 =================
 
 def check_eth(address, token=False):
     action = "tokentx" if token else "txlist"
@@ -60,12 +56,9 @@ def check_eth(address, token=False):
             return tx["hash"], amount, int(tx["timeStamp"])
     return None
 
-# ================= TRC20 =================
-
 def check_trc20(address):
     url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20"
     res = requests.get(url).json()
-
     if "data" not in res:
         return None
 
@@ -77,22 +70,39 @@ def check_trc20(address):
             return txid, amount, timestamp
     return None
 
-# ================= COMMANDS =================
+# ================= COMMANDS (双语命令) =================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 加密货币监控机器人已启动\n\n"
+        "📌 添加地址:\n"
+        "/addbtc 地址\n"
+        "/addeth 地址\n"
+        "/adderc20 地址\n"
+        "/addtrc20 地址\n\n"
+        "📌 管理:\n"
+        "/list 查看列表\n"
+        "/remove 地址 删除\n\n"
+        "👑 仅 Master:\n"
+        "/addadmin 用户ID\n"
+        "/deladmin 用户ID\n"
+        "/adminlist"
+    )
 
 async def add_coin(update, context, coin):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
     if not is_admin(chat_id, user_id, MASTER_ID):
-        await update.message.reply_text("⛔ Admin เท่านั้น")
+        await update.message.reply_text("⛔ 没有权限")
         return
 
     if len(context.args) != 1:
-        await update.message.reply_text(f"ใช้: /add{coin.lower()} address")
+        await update.message.reply_text("格式错误 / 格式不正确")
         return
 
     add_wallet(chat_id, coin, context.args[0])
-    await update.message.reply_text(f"✅ เพิ่ม {coin} สำเร็จ")
+    await update.message.reply_text("✅ 添加成功")
 
 async def addbtc(update, context): await add_coin(update, context, "BTC")
 async def addeth(update, context): await add_coin(update, context, "ETH")
@@ -100,37 +110,53 @@ async def adderc20(update, context): await add_coin(update, context, "USDT")
 async def addtrc20(update, context): await add_coin(update, context, "TRC20")
 
 async def remove(update, context):
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    if not is_admin(chat_id, user_id, MASTER_ID):
-        await update.message.reply_text("⛔ Admin เท่านั้น")
+    if not is_admin(update.effective_chat.id,
+                    update.effective_user.id,
+                    MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
         return
 
-    remove_wallet(chat_id, context.args[0])
-    await update.message.reply_text("🗑 ลบสำเร็จ")
+    remove_wallet(update.effective_chat.id, context.args[0])
+    await update.message.reply_text("🗑 删除成功")
 
 async def list_wallet(update, context):
     chat_id = update.effective_chat.id
     wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
 
     if not wallets:
-        await update.message.reply_text("ไม่มี address")
+        await update.message.reply_text("没有地址")
         return
 
-    text = "📋 Wallets\n"
+    text = "📋 钱包列表:\n"
     for w in wallets:
         text += f"{w['coin']} → {w['address']}\n"
-
     await update.message.reply_text(text)
 
-async def setadmin(update, context):
-    if update.effective_user.id != MASTER_ID:
-        await update.message.reply_text("⛔ Master เท่านั้น")
-        return
+# MASTER ONLY
 
+async def addadmin(update, context):
+    if update.effective_user.id != MASTER_ID:
+        return
     add_admin(update.effective_chat.id, int(context.args[0]))
-    await update.message.reply_text("👑 ตั้ง admin สำเร็จ")
+    await update.message.reply_text("👑 添加管理员成功")
+
+async def deladmin(update, context):
+    if update.effective_user.id != MASTER_ID:
+        return
+    remove_admin(update.effective_chat.id, int(context.args[0]))
+    await update.message.reply_text("🗑 删除管理员成功")
+
+async def adminlist(update, context):
+    if update.effective_user.id != MASTER_ID:
+        return
+    admins = get_admins(update.effective_chat.id)
+    if not admins:
+        await update.message.reply_text("没有管理员")
+        return
+    text = "👑 管理员列表:\n"
+    for a in admins:
+        text += f"{a[0]}\n"
+    await update.message.reply_text(text)
 
 # ================= AUTO LOOP =================
 
@@ -163,17 +189,24 @@ async def auto_check(app):
                 if already_notified(chat_id, txid):
                     continue
 
-                price = get_price(coin)
-                total = amount * price
-
-                text = (
-                    f"🚨 OUTGOING DETECTED\n\n"
-                    f"Coin: {coin}\n"
-                    f"Amount: {amount:.6f}\n"
-                    f"Price: ${price:,.2f}\n"
-                    f"Value: ${total:,.2f}\n\n"
-                    f"Time: {datetime.utcfromtimestamp(timestamp)}"
-                )
+                if coin in ["BTC", "ETH"]:
+                    price = get_price(coin)
+                    total = amount * price
+                    text = (
+                        f"🚨 转出交易\n\n"
+                        f"Coin: {coin}\n"
+                        f"数量: {amount:.6f}\n"
+                        f"价格: ${price:,.2f}\n"
+                        f"总额: ${total:,.2f}\n\n"
+                        f"时间: {datetime.utcfromtimestamp(timestamp)}"
+                    )
+                else:
+                    text = (
+                        f"🚨 转出交易\n\n"
+                        f"Coin: {coin}\n"
+                        f"数量: {amount:.6f}\n\n"
+                        f"时间: {datetime.utcfromtimestamp(timestamp)}"
+                    )
 
                 await app.bot.send_message(chat_id, text)
                 mark_notified(chat_id, txid)
@@ -182,25 +215,11 @@ async def auto_check(app):
                 print("Error:", e)
 
         await asyncio.sleep(CHECK_INTERVAL)
-# ================= start =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Crypto Notify Bot พร้อมใช้งาน\n\n"
-        "คำสั่งที่ใช้ได้:\n"
-        "/addbtc address\n"
-        "/addeth address\n"
-        "/adderc20 address\n"
-        "/addtrc20 address\n"
-        "/list\n"
-        "/remove address\n"
-        "/setadmin user_id"
-    )
 
 # ================= MAIN =================
 
 def main():
     init_db()
-
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -210,17 +229,15 @@ def main():
     app.add_handler(CommandHandler("addtrc20", addtrc20))
     app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("list", list_wallet))
-    app.add_handler(CommandHandler("setadmin", setadmin))
+    app.add_handler(CommandHandler("addadmin", addadmin))
+    app.add_handler(CommandHandler("deladmin", deladmin))
+    app.add_handler(CommandHandler("adminlist", adminlist))
 
-    # start background task after bot starts
     async def post_init(app):
         app.create_task(auto_check(app))
 
     app.post_init = post_init
-
-    print("Bot starting...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
