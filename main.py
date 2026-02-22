@@ -390,6 +390,73 @@ async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("LIST ERROR:", e)
         await update.message.reply_text("list 出错")
 
+
+# ================== master ==================
+async def master(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        return
+
+    await update.message.reply_text(
+        "👑 Master 控制面板\n\n"
+        "/addadmin 用户ID\n"
+        "/deladmin 用户ID\n"
+        "/adminlist\n\n"
+        "⚠️ 权限按群独立"
+    )
+
+
+# ================== เพิ่มแอดมิน ==================
+async def addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        await update.message.reply_text("⛔ 只有Master可以使用")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("用法: /addadmin 用户ID")
+        return
+
+    user_id = int(context.args[0])
+    chat_id = update.effective_chat.id
+
+    add_admin(chat_id, user_id)
+
+    await update.message.reply_text("✅ 管理员添加成功")
+
+# ================== ลบแอดมิน ==================
+async def deladmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        await update.message.reply_text("⛔ 只有Master可以使用")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("用法: /deladmin 用户ID")
+        return
+
+    user_id = int(context.args[0])
+    chat_id = update.effective_chat.id
+
+    remove_admin(chat_id, user_id)
+
+    await update.message.reply_text("🗑 管理员已删除")
+# ==================查看当前群管理员==================
+async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_chat.id, update.effective_user.id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
+    admins = get_admins(update.effective_chat.id)
+
+    if not admins:
+        await update.message.reply_text("本群暂无管理员")
+        return
+
+    text = "👥 本群管理员列表:\n\n"
+
+    for a in admins:
+        text += f"{a[0]}\n"
+
+    await update.message.reply_text(text)
+    
 # ================== MAIN ==================
 def main():
     print("Starting application...")
@@ -410,6 +477,13 @@ def main():
     app.add_handler(CallbackQueryHandler(remove_cancel, pattern="^rm_cancel$"))
 
     app.add_handler(CommandHandler("list", list_wallet))
+
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("addadmin", addadmin))
+    app.add_handler(CommandHandler("deladmin", deladmin))
+    app.add_handler(CommandHandler("adminlist", adminlist))
+    app.add_handler(CommandHandler("master", master))
 
     
     async def startup(app):
