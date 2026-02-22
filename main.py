@@ -210,6 +210,32 @@ async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
+def update_last_txid(chat_id, address, txid):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE wallets SET last_txid=%s WHERE chat_id=%s AND address=%s",
+                (txid, chat_id, address)
+            )
+        conn.commit()
+    finally:
+        put_conn(conn)
+
+
+def get_last_txid(chat_id, address):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT last_txid FROM wallets WHERE chat_id=%s AND address=%s",
+                (chat_id, address)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        put_conn(conn)
+
 
 # ================== ADMIN ==================
 async def addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,26 +277,44 @@ async def auto_check(app):
             if w["coin"] == "ETH":
                 result = check_eth_withdraw(w["address"])
             else:
-                continue  # 其他เหรียญจะเพิ่มภายหลัง
+                continue
 
             if not result:
                 continue
 
             txid, amount = result
 
-            if is_notified(w["chat_id"], txid):
+            last_txid = w.get("last_txid")
+
+            # 🚀 กรณีเพิ่งเพิ่ม (ยังไม่มี last_txid)
+            if not last_txid:
+                await app.bot.send_message(
+                    w["chat_id"],
+                    f"🆕 最新记录\n\n"
+                    f"币种: {w['coin']}\n"
+                    f"备注: {escape_md(w['note'])}\n"
+                    f"数量: {amount}\n"
+                    f"地址: `{w['address']}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                update_last_txid(w["chat_id"], w["address"], txid)
                 continue
 
-            await app.bot.send_message(
-                w["chat_id"],
-                f"🚨 {w['coin']} 出金通知\n\n"
-                f"备注: {escape_md(w['note'])}\n"
-                f"数量: {amount}\n"
-                f"地址: `{w['address']}`",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            # 🔔 กรณีมี tx ใหม่
+            if txid != last_txid:
 
-            mark_notified(w["chat_id"], txid)
+                await app.bot.send_message(
+                    w["chat_id"],
+                    f"🚨 新出金通知\n\n"
+                    f"币种: {w['coin']}\n"
+                    f"备注: {escape_md(w['note'])}\n"
+                    f"数量: {amount}\n"
+                    f"地址: `{w['address']}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                update_last_txid(w["chat_id"], w["address"], txid)
 
         await asyncio.sleep(CHECK_INTERVAL)
 
