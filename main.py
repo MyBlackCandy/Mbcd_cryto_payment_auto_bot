@@ -243,6 +243,80 @@ async def auto_check(app):
 
         await asyncio.sleep(CHECK_INTERVAL)
 
+# ================== remove FLOW ==================
+async def remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_chat.id, update.effective_user.id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("🟡 BTC", callback_data="rmcoin_BTC")],
+        [InlineKeyboardButton("🔵 ETH", callback_data="rmcoin_ETH")],
+        [InlineKeyboardButton("🟢 ERC20", callback_data="rmcoin_ERC20")],
+        [InlineKeyboardButton("🔴 TRC20", callback_data="rmcoin_TRC20")],
+        [InlineKeyboardButton("❌ 取消", callback_data="rm_cancel")]
+    ]
+
+    await update.message.reply_text(
+        "请选择币种",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def remove_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    coin = query.data.replace("rmcoin_", "")
+    chat_id = query.message.chat.id
+
+    wallets = [
+        w for w in get_wallets()
+        if w["chat_id"] == chat_id and w["coin"] == coin
+    ]
+
+    if not wallets:
+        await query.message.reply_text("没有地址")
+        return
+
+    keyboard = []
+
+    for w in wallets:
+        short = w["address"][:10] + "..."
+        keyboard.append([
+            InlineKeyboardButton(
+                short,
+                callback_data=f"rmaddr_{coin}_{w['address']}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("❌ 取消", callback_data="rm_cancel")])
+
+    await query.message.reply_text(
+        "请选择要删除的地址",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+async def remove_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    _, coin, address = query.data.split("_", 2)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
+        (query.message.chat.id, coin, address)
+    )
+    conn.commit()
+    conn.close()
+
+    await query.message.reply_text("🗑 删除成功")
+
+async def remove_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("❌ 已取消")
+
 # ================== TEST ==================
 async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -269,6 +343,47 @@ async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text)
 
+
+# ================== list ==================
+async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
+
+    if not wallets:
+        await update.message.reply_text("没有 address")
+        return
+
+    # เรียงลำดับเหรียญที่ต้องการแสดง
+    coin_order = ["BTC", "ETH", "ERC20", "TRC20"]
+
+    # จัดกลุ่มแบบ dynamic
+    grouped = {}
+    for w in wallets:
+        grouped.setdefault(w["coin"], []).append(w)
+
+    text = "📋 当前群监控地址\n\n"
+
+    for coin in coin_order:
+        if coin not in grouped:
+            continue
+
+        text += f"*{coin}*\n"
+
+        for w in grouped[coin]:
+            note = w.get("note") or "未备注"
+            note_safe = escape_markdown(note)
+            address_safe = escape_markdown(w["address"])
+
+            text += f"{note_safe} | `{address_safe}`\n"
+
+        text += "\n"
+
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN_V2
+    )
+
 # ================== MAIN ==================
 def main():
     print("Starting application...")
@@ -283,6 +398,14 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_flow))
     app.add_handler(CommandHandler("test", test))
 
+    app.add_handler(CommandHandler("remove", remove_start))
+    app.add_handler(CallbackQueryHandler(remove_select_coin, pattern="^rmcoin_"))
+    app.add_handler(CallbackQueryHandler(remove_confirm, pattern="^rmaddr_"))
+    app.add_handler(CallbackQueryHandler(remove_cancel, pattern="^rm_cancel$"))
+
+    app.add_handler(CommandHandler("list", list_wallet))
+
+    
     async def startup(app):
         print("Bot polling started")
         asyncio.create_task(auto_check(app))
