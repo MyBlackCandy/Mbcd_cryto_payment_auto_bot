@@ -185,7 +185,7 @@ async def auto_check(app):
 
 # ================= MAIN =================
 
-def main():
+async def main():
     init_db()
 
     app = Application.builder().token(TOKEN).build()
@@ -198,9 +198,15 @@ def main():
     app.add_handler(CommandHandler("list", list_wallet))
     app.add_handler(CommandHandler("setadmin", setadmin))
 
-    async def start_background(app):
-        asyncio.create_task(auto_check(app))
+    # start background loop after bot starts
+    async def on_start(app):
+        app.create_task(auto_check(app))
 
-    app.post_init = start_background
+    app.post_init = on_start
 
-    app.run_polling()
+    print("Bot starting...")
+    await app.run_polling()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
