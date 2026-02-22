@@ -16,7 +16,7 @@ def init_pool():
         raise Exception("DATABASE_URL not set")
 
     _connection_pool = pool.SimpleConnectionPool(
-        1, 10,   # min 1 max 10 connection
+        1, 10,
         DATABASE_URL,
         sslmode="require",
         connect_timeout=5
@@ -24,11 +24,14 @@ def init_pool():
 
 
 def get_conn():
+    if not _connection_pool:
+        raise Exception("Connection pool not initialized")
     return _connection_pool.getconn()
 
 
 def put_conn(conn):
-    _connection_pool.putconn(conn)
+    if _connection_pool:
+        _connection_pool.putconn(conn)
 
 
 # ================== INIT DATABASE ==================
@@ -47,13 +50,18 @@ def init_db():
                 note TEXT,
                 last_txid TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(chat_id, address)
+                UNIQUE(chat_id, coin, address)
             );
             """)
 
             cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_wallets_chat
             ON wallets(chat_id);
+            """)
+
+            cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_wallets_coin
+            ON wallets(coin);
             """)
 
             # ---------------- Notified Table ----------------
@@ -83,7 +91,7 @@ def init_db():
             """)
 
         conn.commit()
-        print("Database initialized successfully")
+        print("✅ Database initialized successfully")
 
     finally:
         put_conn(conn)
@@ -97,8 +105,9 @@ def add_wallet(chat_id, coin, address, note):
             cur.execute("""
                 INSERT INTO wallets (chat_id, coin, address, note)
                 VALUES (%s,%s,%s,%s)
-                ON CONFLICT (chat_id, address)
-                DO UPDATE SET note = EXCLUDED.note
+                ON CONFLICT (chat_id, coin, address)
+                DO UPDATE SET
+                    note = EXCLUDED.note
             """, (chat_id, coin, address, note))
         conn.commit()
     finally:
@@ -128,13 +137,26 @@ def get_all_wallets():
         put_conn(conn)
 
 
-def delete_wallet(chat_id, address):
+def delete_wallet(chat_id, coin, address):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM wallets WHERE chat_id=%s AND address=%s",
-                (chat_id, address)
+                "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
+                (chat_id, coin, address)
+            )
+        conn.commit()
+    finally:
+        put_conn(conn)
+
+
+def update_last_txid(chat_id, coin, address, txid):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE wallets SET last_txid=%s WHERE chat_id=%s AND coin=%s AND address=%s",
+                (txid, chat_id, coin, address)
             )
         conn.commit()
     finally:
