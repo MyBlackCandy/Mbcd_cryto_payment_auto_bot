@@ -274,8 +274,18 @@ async def auto_check(app):
 
         for w in wallets:
 
-            if w["coin"] == "ETH":
+            if w["coin"] == "BTC":
+                result = check_btc_withdraw(w["address"])
+
+            elif w["coin"] == "ETH":
                 result = check_eth_withdraw(w["address"])
+
+            elif w["coin"] == "ERC20":
+                result = check_erc20_withdraw(w["address"])
+
+            elif w["coin"] == "TRC20":
+                result = check_trc20_withdraw(w["address"])
+
             else:
                 continue
 
@@ -283,16 +293,15 @@ async def auto_check(app):
                 continue
 
             txid, amount = result
-
             last_txid = w.get("last_txid")
 
-            # 🚀 กรณีเพิ่งเพิ่ม (ยังไม่มี last_txid)
+            # 🆕 ครั้งแรก
             if not last_txid:
                 await app.bot.send_message(
                     w["chat_id"],
-                    f"🆕 最新记录\n\n"
-                    f"币种: {w['coin']}\n"
+                    f"🆕 使用机器人之前最后记录\n"
                     f"备注: {escape_md(w['note'])}\n"
+                    f"币种: {w['coin']}\n"
                     f"数量: {amount}\n"
                     f"地址: `{w['address']}`",
                     parse_mode=ParseMode.MARKDOWN
@@ -301,14 +310,14 @@ async def auto_check(app):
                 update_last_txid(w["chat_id"], w["address"], txid)
                 continue
 
-            # 🔔 กรณีมี tx ใหม่
+            # 🔔 ธุรกรรมใหม่
             if txid != last_txid:
 
                 await app.bot.send_message(
                     w["chat_id"],
-                    f"🚨 新出金通知\n\n"
-                    f"币种: {w['coin']}\n"
+                    f"🚨 新出金通知\n"
                     f"备注: {escape_md(w['note'])}\n"
+                    f"币种: {w['coin']}\n"
                     f"数量: {amount}\n"
                     f"地址: `{w['address']}`",
                     parse_mode=ParseMode.MARKDOWN
@@ -318,6 +327,91 @@ async def auto_check(app):
 
         await asyncio.sleep(CHECK_INTERVAL)
 
+
+# ================== BTC (เงินออก) ==================
+def check_btc_withdraw(address):
+    try:
+        url = f"https://blockstream.info/api/address/{address}/txs?limit=3"
+        data = requests.get(url, timeout=10).json()
+
+        for tx in data:
+            for vin in tx.get("vin", []):
+                if vin.get("prevout", {}).get("scriptpubkey_address") == address:
+                    amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
+                    return tx["txid"], amount
+    except:
+        return None
+    return None
+# ================== ETH (เงินออก) ==================
+def check_eth_withdraw(address):
+    try:
+        url = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "alchemy_getAssetTransfers",
+            "params": [{
+                "fromBlock": "0x0",
+                "toBlock": "latest",
+                "fromAddress": address,
+                "category": ["external"],
+                "maxCount": "0x3",
+                "order": "desc"
+            }],
+            "id": 1
+        }
+
+        res = requests.post(url, json=payload, timeout=10).json()
+        transfers = res.get("result", {}).get("transfers", [])
+        if not transfers:
+            return None
+
+        tx = transfers[0]
+        return tx["hash"], Decimal(str(tx["value"]))
+    except:
+        return None
+# ================== ERC20 (เงินออก) ==================
+def check_erc20_withdraw(address):
+    try:
+        url = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "alchemy_getAssetTransfers",
+            "params": [{
+                "fromBlock": "0x0",
+                "toBlock": "latest",
+                "fromAddress": address,
+                "category": ["erc20"],
+                "maxCount": "0x3",
+                "order": "desc"
+            }],
+            "id": 1
+        }
+
+        res = requests.post(url, json=payload, timeout=10).json()
+        transfers = res.get("result", {}).get("transfers", [])
+        if not transfers:
+            return None
+
+        tx = transfers[0]
+        amount = Decimal(str(tx["value"]))
+        symbol = tx.get("asset", "TOKEN")
+
+        return tx["hash"], f"{amount} {symbol}"
+    except:
+        return None
+# ================== TRC20 (เงินออก)==================
+def check_trc20_withdraw(address):
+    try:
+        url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=3"
+        res = requests.get(url, timeout=10).json()
+
+        for tx in res.get("data", []):
+            if tx.get("from", "").lower() == address.lower():
+                amount = Decimal(tx["value"]) / Decimal(10**6)
+                return tx["transaction_id"], amount
+    except:
+        return None
+    return None
 
 # ================== MAIN ==================
 def main():
