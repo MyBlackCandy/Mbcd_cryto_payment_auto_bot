@@ -173,15 +173,16 @@ async def remove_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    address = query.data.replace("remove_", "")
+    data = query.data.replace("remove_", "")
+    coin, address = data.split("|", 1)
     chat_id = query.message.chat.id
 
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM wallets WHERE chat_id=%s AND address=%s",
-                (chat_id, address)
+                "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
+                (chat_id, coin, address)
             )
         conn.commit()
     finally:
@@ -267,68 +268,8 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-# ================== AUTO CHECK ==================
-async def auto_check(app):
-    while True:
-        wallets = get_all_wallets()
+# ================== CHECK FUNCTIONS ==================
 
-        for w in wallets:
-
-            if w["coin"] == "BTC":
-                result = check_btc_withdraw(w["address"])
-
-            elif w["coin"] == "ETH":
-                result = check_eth_withdraw(w["address"])
-
-            elif w["coin"] == "ERC20":
-                result = check_erc20_withdraw(w["address"])
-
-            elif w["coin"] == "TRC20":
-                result = check_trc20_withdraw(w["address"])
-
-            else:
-                continue
-
-            if not result:
-                continue
-
-            txid, amount = result
-            last_txid = w.get("last_txid")
-
-            # 🆕 ครั้งแรก
-            if not last_txid:
-                await app.bot.send_message(
-                    w["chat_id"],
-                    f"🆕 使用机器人之前最后记录\n"
-                    f"备注: {escape_md(w['note'])}\n"
-                    f"币种: {w['coin']}\n"
-                    f"数量: {amount}\n"
-                    f"地址: `{w['address']}`",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-
-                update_last_txid(w["chat_id"], w["address"], txid)
-                continue
-
-            # 🔔 ธุรกรรมใหม่
-            if txid != last_txid:
-
-                await app.bot.send_message(
-                    w["chat_id"],
-                    f"🚨 新出金通知\n"
-                    f"备注: {escape_md(w['note'])}\n"
-                    f"币种: {w['coin']}\n"
-                    f"数量: {amount}\n"
-                    f"地址: `{w['address']}`",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-
-                update_last_txid(w["chat_id"], w["address"], txid)
-
-        await asyncio.sleep(CHECK_INTERVAL)
-
-
-# ================== BTC (เงินออก) ==================
 def check_btc_withdraw(address):
     try:
         url = f"https://blockstream.info/api/address/{address}/txs?limit=3"
@@ -336,13 +277,15 @@ def check_btc_withdraw(address):
 
         for tx in data:
             for vin in tx.get("vin", []):
-                if vin.get("prevout", {}).get("scriptpubkey_address") == address:
-                    amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
+                prev = vin.get("prevout", {})
+                if prev.get("scriptpubkey_address") == address:
+                    amount = Decimal(prev.get("value", 0)) / Decimal(100000000)
                     return tx["txid"], amount
     except:
         return None
     return None
-# ================== ETH (เงินออก) ==================
+
+
 def check_eth_withdraw(address):
     try:
         url = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
@@ -369,7 +312,8 @@ def check_eth_withdraw(address):
         return tx["hash"], Decimal(str(tx["value"]))
     except:
         return None
-# ================== ERC20 (เงินออก) ==================
+
+
 def check_erc20_withdraw(address):
     try:
         url = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
@@ -395,11 +339,11 @@ def check_erc20_withdraw(address):
         tx = transfers[0]
         amount = Decimal(str(tx["value"]))
         symbol = tx.get("asset", "TOKEN")
-
         return tx["hash"], f"{amount} {symbol}"
     except:
         return None
-# ================== TRC20 (เงินออก)==================
+
+
 def check_trc20_withdraw(address):
     try:
         url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=3"
@@ -412,6 +356,72 @@ def check_trc20_withdraw(address):
     except:
         return None
     return None
+
+
+# ================== AUTO CHECK ==================
+async def auto_check(app):
+    while True:
+        wallets = get_all_wallets()
+
+        for w in wallets:
+
+            coin = w["coin"]
+            address = w["address"]
+            chat_id = w["chat_id"]
+
+            if coin == "BTC":
+                result = check_btc_withdraw(address)
+
+            elif coin == "ETH":
+                result = check_eth_withdraw(address)
+
+            elif coin == "ERC20":
+                result = check_erc20_withdraw(address)
+
+            elif coin == "TRC20":
+                result = check_trc20_withdraw(address)
+
+            else:
+                continue
+
+            if not result:
+                continue
+
+            txid, amount = result
+
+            last_txid = w.get("last_txid")
+
+            # 🆕 ครั้งแรก
+            if not last_txid:
+                await app.bot.send_message(
+                    chat_id,
+                    f"🆕 最新记录\n"
+                    f"备注: {escape_md(w['note'])}\n"
+                    f"币种: {coin}\n"
+                    f"数量: {amount}\n"
+                    f"地址: `{address}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                update_last_txid(chat_id, address, txid)
+                continue
+
+            # 🔔 รายการใหม่
+            if txid != last_txid:
+
+                await app.bot.send_message(
+                    chat_id,
+                    f"🚨 新出金通知\n"
+                    f"备注: {escape_md(w['note'])}\n"
+                    f"币种: {coin}\n"
+                    f"数量: {amount}\n"
+                    f"地址: `{address}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                update_last_txid(chat_id, address, txid)
+
+        await asyncio.sleep(CHECK_INTERVAL)
 
 # ================== MAIN ==================
 def main():
