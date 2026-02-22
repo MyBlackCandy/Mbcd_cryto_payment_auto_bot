@@ -428,7 +428,7 @@ async def auto_check(app):
 
 async def startup(app):
 
-    print("🚀 Bot restarted")
+    print("🚀 Bot started")
 
     try:
         wallets = get_all_wallets()
@@ -440,14 +440,13 @@ async def startup(app):
             try:
                 await app.bot.send_message(
                     chat_id,
-                    "🤖 Bot 已重新启动\n\n"
-                    "✅ 系统已恢复监控"
+                    "机器人可使用"
                 )
             except Exception as e:
                 print(f"Notify error {chat_id}:", e)
 
     except Exception as e:
-        print("Startup error:", e)
+        print("Startup notify error:", e)
 
     asyncio.create_task(auto_check(app))
 # ================== MAIN ==================
@@ -472,6 +471,7 @@ def main():
 
     async def startup(app):
         asyncio.create_task(auto_check(app))
+
 
     app.post_init = startup
     app.run_polling()
