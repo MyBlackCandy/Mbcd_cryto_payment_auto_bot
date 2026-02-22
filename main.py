@@ -488,6 +488,56 @@ def get_price_usd(symbol):
     except:
         return None
 
+# ---------------- คำนวณ USD ----------------
+usd_text = ""
+
+# ---------- BTC / ETH ใช้ราคาตลาด ----------
+if coin in ["BTC", "ETH"] and not isinstance(amount, str):
+
+    price = get_price_usd(coin)
+
+    if price:
+        usd_value = amount * price
+        usd_text = f"\n💲 价值: ${usd_value:.2f}"
+
+# ---------- ERC20 / TRC20 = 1 USD ----------
+elif coin in ["ERC20", "TRC20"]:
+
+    if isinstance(amount, str):
+        # กรณี ERC20 มี symbol เช่น 100 USDT
+        try:
+            value, token = amount.split()
+            usd_value = Decimal(value)
+            usd_text = f"\n💲 价值: ${usd_value:.2f}"
+        except:
+            usd_text = ""
+    else:
+        # TRC20 คืน Decimal ตรง ๆ
+        usd_value = Decimal(amount)
+        usd_text = f"\n💲 价值: ${usd_value:.2f}"
+
+def get_price_usd(symbol):
+    try:
+        mapping = {
+            "BTC": "bitcoin",
+            "ETH": "ethereum"
+        }
+
+        coin_id = mapping.get(symbol)
+        if not coin_id:
+            return None
+
+        url = "https://api.coingecko.com/api/v3/simple/price"
+        res = requests.get(url, params={
+            "ids": coin_id,
+            "vs_currencies": "usd"
+        }, timeout=10).json()
+
+        return Decimal(str(res[coin_id]["usd"]))
+
+    except:
+        return None
+
 # ================== MAIN ==================
 def main():
     init_pool()
