@@ -188,15 +188,7 @@ async def auto_check(app):
 def main():
     init_db()
 
-    async def post_init(app):
-        app.create_task(auto_check(app))
-
-    app = (
-        Application.builder()
-        .token(TOKEN)
-        .post_init(post_init)
-        .build()
-    )
+    app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("addbtc", addbtc))
     app.add_handler(CommandHandler("addeth", addeth))
@@ -205,5 +197,10 @@ def main():
     app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("list", list_wallet))
     app.add_handler(CommandHandler("setadmin", setadmin))
+
+    async def start_background(app):
+        asyncio.create_task(auto_check(app))
+
+    app.post_init = start_background
 
     app.run_polling()
