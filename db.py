@@ -19,16 +19,7 @@ def init_db():
         address TEXT NOT NULL,
         note TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(chat_id, address)
-    );
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS admins (
-        id SERIAL PRIMARY KEY,
-        chat_id BIGINT NOT NULL,
-        user_id BIGINT NOT NULL,
-        UNIQUE(chat_id, user_id)
+        UNIQUE(chat_id, coin, address)
     );
     """)
 
@@ -42,6 +33,15 @@ def init_db():
     );
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS admins (
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT NOT NULL,
+        user_id BIGINT NOT NULL,
+        UNIQUE(chat_id, user_id)
+    );
+    """)
+
     conn.commit()
     conn.close()
 
@@ -51,17 +51,9 @@ def add_wallet(chat_id, coin, address, note=None):
     cur.execute("""
         INSERT INTO wallets (chat_id, coin, address, note)
         VALUES (%s,%s,%s,%s)
-        ON CONFLICT (chat_id, address)
+        ON CONFLICT (chat_id, coin, address)
         DO UPDATE SET note = EXCLUDED.note
     """, (chat_id, coin, address, note))
-    conn.commit()
-    conn.close()
-
-def remove_wallet(chat_id, address):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM wallets WHERE chat_id=%s AND address=%s",
-                (chat_id, address))
     conn.commit()
     conn.close()
 
@@ -72,6 +64,26 @@ def get_wallets():
     rows = cur.fetchall()
     conn.close()
     return rows
+
+def already_notified(chat_id, txid):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM notified_txs WHERE chat_id=%s AND txid=%s",
+                (chat_id, txid))
+    result = cur.fetchone()
+    conn.close()
+    return result is not None
+
+def mark_notified(chat_id, txid):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO notified_txs (chat_id, txid)
+        VALUES (%s,%s)
+        ON CONFLICT DO NOTHING
+    """, (chat_id, txid))
+    conn.commit()
+    conn.close()
 
 def add_admin(chat_id, user_id):
     conn = get_conn()
@@ -96,7 +108,9 @@ def remove_admin(chat_id, user_id):
 def get_admins(chat_id):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT user_id FROM admins WHERE chat_id=%s", (chat_id,))
+    cur.execute("""
+        SELECT user_id FROM admins WHERE chat_id=%s
+    """, (chat_id,))
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -113,24 +127,3 @@ def is_admin(chat_id, user_id, master_id):
     result = cur.fetchone()
     conn.close()
     return result is not None
-
-def already_notified(chat_id, txid):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT 1 FROM notified_txs WHERE chat_id=%s AND txid=%s
-    """, (chat_id, txid))
-    result = cur.fetchone()
-    conn.close()
-    return result is not None
-
-def mark_notified(chat_id, txid):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO notified_txs (chat_id, txid)
-        VALUES (%s,%s)
-        ON CONFLICT DO NOTHING
-    """, (chat_id, txid))
-    conn.commit()
-    conn.close()
