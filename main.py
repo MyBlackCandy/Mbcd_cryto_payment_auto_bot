@@ -19,7 +19,12 @@ TRONGRID_API = os.getenv("TRONGRID_API")
 SOLANA_API = "https://api.mainnet-beta.solana.com"
 
 
+
+
+
 # ================= PRICE =================
+
+
 
 def get_price(symbol):
     if symbol == "USDT-ERC20" or symbol == "USDT-TRC20":
@@ -97,7 +102,60 @@ def has_access(user_id):
 # ================= COMMANDS =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Crypto Alert Bot Ready")
+    user = update.effective_user
+    chat = update.effective_chat
+
+    user_id = user.id
+    chat_id = chat.id
+    chat_type = chat.type
+
+    # ตรวจสอบสิทธิ์
+    if is_master(user_id):
+        role = "👑 MASTER"
+    elif is_admin(user_id):
+        role = "🛡 ADMIN"
+    else:
+        role = "❌ ไม่มีสิทธิ์"
+
+    text = f"""
+🤖 Crypto Alert Bot
+
+👤 User ID: {user_id}
+💬 Chat ID: {chat_id}
+🔐 สิทธิ์: {role}
+
+━━━━━━━━━━━━━━━
+📘 วิธีใช้งาน
+
+1️⃣ เพิ่มกระเป๋า
+/add
+→ เลือกเหรียญ
+→ ส่งที่อยู่
+→ ส่งหมายเหตุ
+
+2️⃣ ดูรายการในกลุ่ม
+/list
+
+3️⃣ ลบรายการ
+/remove
+
+━━━━━━━━━━━━━━━
+👑 คำสั่งมาสเตอร์
+/addadmin <user_id>
+/removeadmin <user_id>
+/admins
+
+⚠️ หมายเหตุ:
+• บอทต้องอยู่ในกลุ่ม
+• การแจ้งเตือนแยกตาม group
+• ไม่แจ้งซ้ำธุรกรรม
+• แสดงมูลค่า USD ณ เวลาตรวจพบ
+"""
+
+    if role == "❌ ไม่มีสิทธิ์":
+        text += "\n\n🚫 คุณยังไม่มีสิทธิ์ใช้งาน กรุณาติดต่อ MASTER"
+
+    await update.message.reply_text(text.strip())
 
 
 async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
