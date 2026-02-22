@@ -1,177 +1,27 @@
 import os
 import asyncio
 import requests
-from datetime import datetime
 from decimal import Decimal
+from datetime import datetime
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
-import psycopg2
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# ==========================
-# ENV
-# ==========================
+from db import (
+    init_db,
+    add_wallet,
+    remove_wallet,
+    get_wallets,
+    add_admin,
+    is_admin,
+    already_notified,
+    mark_notified
+)
+
 TOKEN = os.getenv("TOKEN")
 MASTER_ID = int(os.getenv("MASTER_ID"))
 ETHERSCAN_KEY = os.getenv("ETHERSCAN_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 CHECK_INTERVAL = 30  # วินาที
-
-# ==========================
-# DATABASE
-# ==========================
-def get_conn():
-    return psycopg2.connect(DATABASE_URL)
-
-def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS wallets (
-        id SERIAL PRIMARY KEY,
-        chat_id BIGINT,
-        coin TEXT,
-        address TEXT,
-        last_tx TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS admins (
-        chat_id BIGINT,
-        user_id BIGINT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-# ==========================
-# ADMIN SYSTEM
-# ==========================
-def is_admin(chat_id, user_id):
-    if user_id == MASTER_ID:
-        return True
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT 1 FROM admins WHERE chat_id=%s AND user_id=%s",
-        (chat_id, user_id),
-    )
-    result = cur.fetchone()
-    conn.close()
-    return result is not None
-
-# ==========================
-# COMMANDS
-# ==========================
-async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    if not is_admin(chat_id, user_id):
-        await update.message.reply_text("⛔ Admin เท่านั้น")
-        return
-
-    try:
-        coin = context.args[0].upper()
-        address = context.args[1]
-
-        if coin not in ["BTC", "ETH", "USDT"]:
-            await update.message.reply_text("เหรียญรองรับ: BTC ETH USDT")
-            return
-
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO wallets (chat_id, coin, address) VALUES (%s,%s,%s)",
-            (chat_id, coin, address),
-        )
-        conn.commit()
-        conn.close()
-
-        await update.message.reply_text(f"✅ เพิ่ม {coin} สำเร็จ")
-
-    except:
-        await update.message.reply_text("ใช้: /add BTC address")
-
-async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    if not is_admin(chat_id, user_id):
-        await update.message.reply_text("⛔ Admin เท่านั้น")
-        return
-
-    try:
-        address = context.args[0]
-
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "DELETE FROM wallets WHERE chat_id=%s AND address=%s",
-            (chat_id, address),
-        )
-        conn.commit()
-        conn.close()
-
-        await update.message.reply_text("🗑 ลบสำเร็จ")
-
-    except:
-        await update.message.reply_text("ใช้: /remove address")
-
-async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT coin, address FROM wallets WHERE chat_id=%s",
-        (chat_id,),
-    )
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        await update.message.reply_text("ไม่มี address")
-        return
-
-    text = "📋 Wallets\n"
-    for coin, addr in rows:
-        text += f"{coin} → {addr}\n"
-
-    await update.message.reply_text(text)
-
-async def setadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    if user_id != MASTER_ID:
-        await update.message.reply_text("⛔ Master เท่านั้น")
-        return
-
-    try:
-        new_admin = int(context.args[0])
-
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO admins (chat_id, user_id) VALUES (%s,%s)",
-            (chat_id, new_admin),
-        )
-        conn.commit()
-        conn.close()
-
-        await update.message.reply_text("👑 ตั้ง admin สำเร็จ")
-
-    except:
-        await update.message.reply_text("ใช้: /setadmin user_id")
 
 # ==========================
 # PRICE (USD)
@@ -182,38 +32,34 @@ def get_price(coin):
         "ETH": "ethereum",
         "USDT": "tether"
     }
-
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_map[coin]}&vs_currencies=usd"
     data = requests.get(url).json()
     return Decimal(str(list(data.values())[0]["usd"]))
 
 # ==========================
-# BLOCKCHAIN CHECK
+# BTC OUTGOING
 # ==========================
 def check_btc(address):
-    data = requests.get(
-        f"https://blockstream.info/api/address/{address}/txs"
-    ).json()
-
+    url = f"https://blockstream.info/api/address/{address}/txs"
+    data = requests.get(url).json()
     if not data:
         return None
 
-    tx = data[0]
+    for tx in data[:5]:  # เช็ค 5 รายการล่าสุด
+        txid = tx["txid"]
 
-    # ตรวจ outgoing
-    for vin in tx["vin"]:
-        if vin.get("prevout", {}).get("scriptpubkey_address") == address:
-            amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
-            return tx["txid"], amount, tx["status"]["block_time"]
+        for vin in tx["vin"]:
+            if vin.get("prevout", {}).get("scriptpubkey_address") == address:
+                amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
+                return txid, amount, tx["status"]["block_time"]
 
     return None
 
+# ==========================
+# ETH / USDT OUTGOING
+# ==========================
 def check_eth(address, token=False):
-    if token:
-        action = "tokentx"
-    else:
-        action = "txlist"
-
+    action = "tokentx" if token else "txlist"
     url = (
         f"https://api.etherscan.io/api?"
         f"module=account&action={action}"
@@ -221,29 +67,96 @@ def check_eth(address, token=False):
     )
 
     res = requests.get(url).json()
-
     if res["status"] != "1":
         return None
 
-    tx = res["result"][0]
+    for tx in res["result"][:5]:
+        if tx["from"].lower() == address.lower():
+            amount = Decimal(tx["value"]) / Decimal(10**18)
+            return tx["hash"], amount, int(tx["timeStamp"])
 
-    if tx["from"].lower() != address.lower():
-        return None
+    return None
 
-    amount = Decimal(tx["value"]) / Decimal(10**18)
-    return tx["hash"], amount, int(tx["timeStamp"])
+# ==========================
+# COMMANDS
+# ==========================
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ Admin เท่านั้น")
+        return
+
+    try:
+        coin = context.args[0].upper()
+        address = context.args[1]
+
+        if coin not in ["BTC", "ETH", "USDT"]:
+            await update.message.reply_text("รองรับ: BTC ETH USDT")
+            return
+
+        add_wallet(chat_id, coin, address)
+        await update.message.reply_text("✅ เพิ่มสำเร็จ")
+
+    except:
+        await update.message.reply_text("ใช้: /add BTC address")
+
+async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ Admin เท่านั้น")
+        return
+
+    try:
+        address = context.args[0]
+        remove_wallet(chat_id, address)
+        await update.message.reply_text("🗑 ลบสำเร็จ")
+    except:
+        await update.message.reply_text("ใช้: /remove address")
+
+async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    wallets = get_wallets()
+
+    rows = [w for w in wallets if w["chat_id"] == chat_id]
+
+    if not rows:
+        await update.message.reply_text("ไม่มี address")
+        return
+
+    text = "📋 Wallets\n"
+    for w in rows:
+        text += f"{w['coin']} → {w['address']}\n"
+
+    await update.message.reply_text(text)
+
+async def setadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MASTER_ID:
+        await update.message.reply_text("⛔ Master เท่านั้น")
+        return
+
+    try:
+        new_admin = int(context.args[0])
+        add_admin(update.effective_chat.id, new_admin)
+        await update.message.reply_text("👑 ตั้ง admin สำเร็จ")
+    except:
+        await update.message.reply_text("ใช้: /setadmin user_id")
 
 # ==========================
 # AUTO CHECK LOOP
 # ==========================
 async def auto_check(app):
     while True:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT id, chat_id, coin, address, last_tx FROM wallets")
-        rows = cur.fetchall()
+        wallets = get_wallets()
 
-        for wid, chat_id, coin, address, last_tx in rows:
+        for w in wallets:
+            chat_id = w["chat_id"]
+            coin = w["coin"]
+            address = w["address"]
+
             try:
                 if coin == "BTC":
                     result = check_btc(address)
@@ -257,7 +170,7 @@ async def auto_check(app):
 
                 txid, amount, timestamp = result
 
-                if txid == last_tx:
+                if already_notified(chat_id, txid):
                     continue
 
                 price = get_price(coin)
@@ -273,17 +186,11 @@ async def auto_check(app):
                 )
 
                 await app.bot.send_message(chat_id, text)
-
-                cur.execute(
-                    "UPDATE wallets SET last_tx=%s WHERE id=%s",
-                    (txid, wid),
-                )
-                conn.commit()
+                mark_notified(chat_id, txid)
 
             except Exception as e:
                 print("Error:", e)
 
-        conn.close()
         await asyncio.sleep(CHECK_INTERVAL)
 
 # ==========================
