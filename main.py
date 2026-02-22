@@ -163,7 +163,7 @@ async def remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([
             InlineKeyboardButton(
                 f"{w['coin']} | {w['note'] or ''}",
-                callback_data=f"remove_{w['address']}"
+                callback_data=f"remove_{w['coin']}|{w['address']}"
             )
         ])
 
@@ -183,16 +183,7 @@ async def remove_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coin, address = data.split("|", 1)
     chat_id = query.message.chat.id
 
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
-                (chat_id, coin, address)
-            )
-        conn.commit()
-    finally:
-        put_conn(conn)
+    delete_wallet(chat_id, coin, address)
 
     await query.message.reply_text("🗑 删除成功")
     context.user_data.clear()
