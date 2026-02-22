@@ -42,29 +42,44 @@ def check_btc(address):
     return None
 
 
-def check_eth(address, erc20=False):
-    action = "tokentx" if erc20 else "txlist"
-    url = (
-        f"https://api.etherscan.io/api?"
-        f"module=account&action={action}"
-        f"&address={address}&sort=desc&apikey={ETHERSCAN_KEY}"
-    )
-    res = requests.get(url).json()
+def check_eth_alchemy(address, erc20=False):
+    url = f"https://eth-mainnet.g.alchemy.com/v2/{os.getenv('ALCHEMY_KEY')}"
 
-    if res["status"] != "1":
+    category = ["erc20"] if erc20 else ["external"]
+
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "alchemy_getAssetTransfers",
+        "params": [{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "fromAddress": address,
+            "category": category,
+            "withMetadata": True,
+            "maxCount": "0x5",
+            "order": "desc"
+        }],
+        "id": 1
+    }
+
+    res = requests.post(url, json=payload).json()
+
+    transfers = res.get("result", {}).get("transfers", [])
+
+    if not transfers:
         return None
 
-    for tx in res["result"][:5]:
-        if tx["from"].lower() == address.lower():
+    tx = transfers[0]
 
-            if erc20:
-                amount = Decimal(tx["value"]) / Decimal(10**6)
-            else:
-                amount = Decimal(tx["value"]) / Decimal(10**18)
+    txid = tx["hash"]
+    timestamp = int(int(tx["metadata"]["blockTimestamp"], 16))
+    
+    if erc20:
+        amount = Decimal(tx["value"])
+    else:
+        amount = Decimal(tx["value"])
 
-            return tx["hash"], amount, int(tx["timeStamp"])
-
-    return None
+    return txid, amount, timestamp
 
 
 def check_trc20(address):
@@ -137,10 +152,10 @@ async def auto_check(app):
                     result = check_btc(address)
 
                 elif coin == "ETH":
-                    result = check_eth(address)
+                    result = check_eth_alchemy(address)
 
                 elif coin == "ERC20":
-                    result = check_eth(address, erc20=True)
+                    result = check_eth_alchemy(address, erc20=True)
 
                 elif coin == "TRC20":
                     result = check_trc20(address)
