@@ -1,248 +1,137 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from psycopg2 import pool
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-_connection_pool = None
-
-
-# ================== CONNECTION POOL ==================
-def init_pool():
-    global _connection_pool
-
-    if not DATABASE_URL:
-        raise Exception("DATABASE_URL not set")
-
-    _connection_pool = pool.SimpleConnectionPool(
-        1, 10,
-        DATABASE_URL,
-        sslmode="require",
-        connect_timeout=5
-    )
-
 
 def get_conn():
-    if not _connection_pool:
-        raise Exception("Connection pool not initialized")
-    return _connection_pool.getconn()
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
-def put_conn(conn):
-    if _connection_pool:
-        _connection_pool.putconn(conn)
-
-
-# ================== INIT DATABASE ==================
 def init_db():
     conn = get_conn()
-    try:
-        with conn.cursor() as cur:
+    cur = conn.cursor()
 
-            # ---------------- Wallet Table ----------------
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS wallets (
-                id SERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                coin VARCHAR(20) NOT NULL,
-                address TEXT NOT NULL,
-                note TEXT,
-                last_txid TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(chat_id, coin, address)
-            );
-            """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        telegram_id BIGINT UNIQUE,
+        role VARCHAR(20) DEFAULT 'admin'
+    );
+    """)
 
-            cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wallets_chat
-            ON wallets(chat_id);
-            """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS wallets (
+        id SERIAL PRIMARY KEY,
+        group_id BIGINT,
+        symbol VARCHAR(30),
+        address TEXT,
+        note TEXT,
+        last_tx_hash TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    """)
 
-            cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wallets_coin
-            ON wallets(coin);
-            """)
-
-            # ---------------- Notified Table ----------------
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS notified (
-                id SERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                txid TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(chat_id, txid)
-            );
-            """)
-
-            cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_notified_chat_tx
-            ON notified(chat_id, txid);
-            """)
-
-            # ---------------- Admin Table ----------------
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS admins (
-                id SERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                UNIQUE(chat_id, user_id)
-            );
-            """)
-
-        conn.commit()
-        print("✅ Database initialized successfully")
-
-    finally:
-        put_conn(conn)
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
-# ================== WALLET ==================
-def add_wallet(chat_id, coin, address, note):
+# ================= USERS =================
+
+def add_admin(user_id):
     conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO wallets (chat_id, coin, address, note)
-                VALUES (%s,%s,%s,%s)
-                ON CONFLICT (chat_id, coin, address)
-                DO UPDATE SET
-                    note = EXCLUDED.note
-            """, (chat_id, coin, address, note))
-        conn.commit()
-    finally:
-        put_conn(conn)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO users (telegram_id, role)
+        VALUES (%s,'admin')
+        ON CONFLICT DO NOTHING
+    """, (user_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
-def get_wallets(chat_id):
+def remove_admin(user_id):
     conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT * FROM wallets WHERE chat_id=%s ORDER BY id DESC",
-                (chat_id,)
-            )
-            return cur.fetchall()
-    finally:
-        put_conn(conn)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users WHERE telegram_id=%s", (user_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_admins():
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT telegram_id FROM users")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def is_admin(user_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM users WHERE telegram_id=%s", (user_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    return bool(result)
+
+
+# ================= WALLETS =================
+
+def add_wallet(group_id, symbol, address, note):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO wallets (group_id, symbol, address, note)
+        VALUES (%s,%s,%s,%s)
+    """, (group_id, symbol, address, note))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def remove_wallet(wallet_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM wallets WHERE id=%s", (wallet_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_wallets(group_id):
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM wallets WHERE group_id=%s", (group_id,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
 
 
 def get_all_wallets():
     conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM wallets")
-            return cur.fetchall()
-    finally:
-        put_conn(conn)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM wallets")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
 
 
-def delete_wallet(chat_id, coin, address):
+def update_last_tx(wallet_id, tx_hash):
     conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
-                (chat_id, coin, address)
-            )
-        conn.commit()
-    finally:
-        put_conn(conn)
-
-
-def update_last_txid(chat_id, coin, address, txid):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE wallets SET last_txid=%s WHERE chat_id=%s AND coin=%s AND address=%s",
-                (txid, chat_id, coin, address)
-            )
-        conn.commit()
-    finally:
-        put_conn(conn)
-
-
-# ================== NOTIFY ==================
-def is_notified(chat_id, txid):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT 1 FROM notified WHERE chat_id=%s AND txid=%s",
-                (chat_id, txid)
-            )
-            return cur.fetchone() is not None
-    finally:
-        put_conn(conn)
-
-
-def mark_notified(chat_id, txid):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO notified (chat_id, txid)
-                VALUES (%s,%s)
-                ON CONFLICT DO NOTHING
-            """, (chat_id, txid))
-        conn.commit()
-    finally:
-        put_conn(conn)
-
-
-# ================== ADMIN ==================
-def add_admin(chat_id, user_id):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO admins (chat_id, user_id)
-                VALUES (%s,%s)
-                ON CONFLICT DO NOTHING
-            """, (chat_id, user_id))
-        conn.commit()
-    finally:
-        put_conn(conn)
-
-
-def remove_admin(chat_id, user_id):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM admins WHERE chat_id=%s AND user_id=%s",
-                (chat_id, user_id)
-            )
-        conn.commit()
-    finally:
-        put_conn(conn)
-
-
-def get_admins(chat_id):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT user_id FROM admins WHERE chat_id=%s",
-                (chat_id,)
-            )
-            return [row[0] for row in cur.fetchall()]
-    finally:
-        put_conn(conn)
-
-
-def is_admin(chat_id, user_id, master_id):
-    if user_id == master_id:
-        return True
-
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT 1 FROM admins WHERE chat_id=%s AND user_id=%s",
-                (chat_id, user_id)
-            )
-            return cur.fetchone() is not None
-    finally:
-        put_conn(conn)
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE wallets SET last_tx_hash=%s WHERE id=%s",
+        (tx_hash, wallet_id)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
