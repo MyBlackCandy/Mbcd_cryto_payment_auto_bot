@@ -7,6 +7,8 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.constants import ParseMode
 from db import *
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import CallbackQueryHandler, MessageHandler, filters
 
 TOKEN = os.getenv("TOKEN")
 MASTER_ID = int(os.getenv("MASTER_ID"))
@@ -422,6 +424,73 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text)
 
+# ================= /add /增加 =================
+
+async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🟡 BTC", callback_data="add_BTC"),
+            InlineKeyboardButton("🔵 ETH", callback_data="add_ETH")
+        ],
+        [
+            InlineKeyboardButton("🟢 ERC20", callback_data="add_ERC20"),
+            InlineKeyboardButton("🔴 TRC20", callback_data="add_TRC20")
+        ]
+    ]
+
+    await update.message.reply_text(
+        "请选择币种 / 请选择类型",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ================= เลือกเหรียญ =================
+async def add_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    coin = query.data.replace("add_", "")
+
+    context.user_data["add_coin"] = coin
+    context.user_data["add_step"] = "address"
+
+    await query.message.reply_text("请输入地址")
+
+# ================= รับ地址 + 备注 =================
+
+async def add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if "add_step" not in context.user_data:
+        return
+
+    step = context.user_data["add_step"]
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        context.user_data.clear()
+        return
+
+    if step == "address":
+        context.user_data["add_address"] = update.message.text.strip()
+        context.user_data["add_step"] = "note"
+        await update.message.reply_text("请输入备注 (可选，发送 - 跳过)")
+
+    elif step == "note":
+        note = update.message.text.strip()
+        if note == "-":
+            note = None
+
+        coin = context.user_data["add_coin"]
+        address = context.user_data["add_address"]
+
+        add_wallet(chat_id, coin, address, note)
+
+        await update.message.reply_text("✅ 添加成功")
+
+        context.user_data.clear()
+
 
 # ================= MAIN =================
 
@@ -445,6 +514,12 @@ def main():
     app.add_handler(CommandHandler("addadmin", addadmin))
     app.add_handler(CommandHandler("deladmin", deladmin))
     app.add_handler(CommandHandler("adminlist", adminlist))
+    app.add_handler(CommandHandler("add", add_start))
+    app.add_handler(CommandHandler("增加", add_start))
+
+    app.add_handler(CallbackQueryHandler(add_select_coin, pattern="^add_"))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_flow))
 
     async def post_init(app):
         app.create_task(auto_check(app))
