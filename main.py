@@ -86,6 +86,8 @@ async def add_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     coin = query.data.replace("addcoin_", "")
 
+    # 🔥 สำคัญ
+    context.user_data["flow"] = "add"
     context.user_data["coin"] = coin
     context.user_data["step"] = "address"
 
@@ -93,19 +95,23 @@ async def add_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if context.user_data.get("flow") != "add":
         return
 
     step = context.user_data.get("step")
 
+    # ---------- รับ address ----------
     if step == "address":
-        address = update.message.text.strip()
-        context.user_data["address"] = address
+        context.user_data["address"] = update.message.text.strip()
         context.user_data["step"] = "note"
+
         await update.message.reply_text("请输入备注 (发送 - 跳过)")
         return
 
+    # ---------- รับ note ----------
     if step == "note":
+
         note = update.message.text.strip()
         if note == "-":
             note = ""
@@ -117,7 +123,7 @@ async def add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_wallet(chat_id, coin, address, note)
 
         await update.message.reply_text(
-            f"✅ 添加成功\n\n"
+            f"✅ 添加成功\n"
             f"币种: {coin}\n"
             f"备注: {escape_md(note)}\n"
             f"地址: `{address}`",
