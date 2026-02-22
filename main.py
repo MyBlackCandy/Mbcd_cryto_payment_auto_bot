@@ -217,13 +217,17 @@ async def list_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
-def update_last_txid(chat_id, address, txid):
+def update_last_txid(chat_id, coin, address, txid):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE wallets SET last_txid=%s WHERE chat_id=%s AND address=%s",
-                (txid, chat_id, address)
+                """
+                UPDATE wallets
+                SET last_txid=%s
+                WHERE chat_id=%s AND coin=%s AND address=%s
+                """,
+                (txid, chat_id, coin, address)
             )
         conn.commit()
     finally:
@@ -409,7 +413,7 @@ async def auto_check(app):
                     parse_mode=ParseMode.MARKDOWN
                 )
 
-                update_last_txid(chat_id, address, txid)
+                update_last_txid(chat_id, coin, address, txid)
                 continue
 
             # 🔔 รายการใหม่
