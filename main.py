@@ -140,6 +140,10 @@ async def adderc20(update, context): await add_coin(update, context, "ERC20")
 async def addtrc20(update, context): await add_coin(update, context, "TRC20")
 
 # ================= list =================
+def escape_markdown(text):
+    escape_chars = r"_*[]()~`>#+-=|{}.!"
+    return "".join("\\" + c if c in escape_chars else c for c in text)
+
 async def list_wallet(update, context):
     chat_id = update.effective_chat.id
     wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
