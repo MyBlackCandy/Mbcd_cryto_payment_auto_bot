@@ -20,10 +20,15 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from db import *
 
+# ================== ENV ==================
 TOKEN = os.getenv("TOKEN")
-MASTER_ID = int(os.getenv("MASTER_ID"))
+MASTER_ID = int(os.getenv("MASTER_ID", "0"))
 ALCHEMY_KEY = os.getenv("ALCHEMY_KEY")
 CHECK_INTERVAL = 30
+
+print("TOKEN loaded:", bool(TOKEN))
+print("MASTER_ID:", MASTER_ID)
+print("ALCHEMY_KEY loaded:", bool(ALCHEMY_KEY))
 
 # ================== UTIL ==================
 def escape_markdown(text):
@@ -38,54 +43,76 @@ def get_price(coin):
 
 # ================== CHAIN ==================
 def check_btc(address):
-    data = requests.get(f"https://blockstream.info/api/address/{address}/txs").json()
-    for tx in data[:5]:
-        for vin in tx["vin"]:
-            if vin.get("prevout", {}).get("scriptpubkey_address") == address:
-                amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
-                return tx["txid"], amount, tx["status"]["block_time"]
+    try:
+        data = requests.get(
+            f"https://blockstream.info/api/address/{address}/txs",
+            timeout=10
+        ).json()
+
+        for tx in data[:5]:
+            for vin in tx["vin"]:
+                if vin.get("prevout", {}).get("scriptpubkey_address") == address:
+                    amount = Decimal(tx["vout"][0]["value"]) / Decimal(100000000)
+                    return tx["txid"], amount, tx["status"]["block_time"]
+    except:
+        return None
     return None
 
 def check_eth_alchemy(address, erc20=False):
-    url = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
-    category = ["erc20"] if erc20 else ["external", "internal"]
-
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "alchemy_getAssetTransfers",
-        "params": [{
-            "fromBlock": "0x0",
-            "toBlock": "latest",
-            "fromAddress": address,
-            "category": category,
-            "withMetadata": True,
-            "maxCount": "0x5",
-            "order": "desc"
-        }],
-        "id": 1
-    }
-
-    res = requests.post(url, json=payload).json()
-    transfers = res.get("result", {}).get("transfers", [])
-    if not transfers:
+    if not ALCHEMY_KEY:
         return None
 
-    tx = transfers[0]
-    txid = tx["hash"]
-    timestamp = int(datetime.fromisoformat(
-        tx["metadata"]["blockTimestamp"].replace("Z", "+00:00")
-    ).timestamp())
-    amount = Decimal(str(tx["value"]))
-    return txid, amount, timestamp
+    try:
+        url = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
+        category = ["erc20"] if erc20 else ["external", "internal"]
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "alchemy_getAssetTransfers",
+            "params": [{
+                "fromBlock": "0x0",
+                "toBlock": "latest",
+                "fromAddress": address,
+                "category": category,
+                "withMetadata": True,
+                "maxCount": "0x5",
+                "order": "desc"
+            }],
+            "id": 1
+        }
+
+        res = requests.post(url, json=payload, timeout=10).json()
+        transfers = res.get("result", {}).get("transfers", [])
+        if not transfers:
+            return None
+
+        tx = transfers[0]
+        txid = tx["hash"]
+        timestamp = int(datetime.fromisoformat(
+            tx["metadata"]["blockTimestamp"].replace("Z", "+00:00")
+        ).timestamp())
+        amount = Decimal(str(tx["value"]))
+
+        return txid, amount, timestamp
+    except:
+        return None
 
 def check_trc20(address):
-    url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20"
-    res = requests.get(url).json()
-    if "data" not in res:
+    try:
+        url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20"
+        res = requests.get(url, timeout=10).json()
+        if "data" not in res:
+            return None
+
+        for tx in res["data"][:5]:
+            if tx["from"].lower() == address.lower():
+                return (
+                    tx["transaction_id"],
+                    Decimal(tx["value"]) / Decimal(10**6),
+                    int(tx["block_timestamp"] / 1000)
+                )
+    except:
         return None
-    for tx in res["data"][:5]:
-        if tx["from"].lower() == address.lower():
-            return tx["transaction_id"], Decimal(tx["value"]) / Decimal(10**6), int(tx["block_timestamp"]/1000)
     return None
 
 # ================== ADD FLOW ==================
@@ -97,17 +124,27 @@ async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🔴 TRC20", callback_data="coin_TRC20")],
         [InlineKeyboardButton("❌ 取消", callback_data="add_cancel")]
     ]
+
     context.user_data["add_step"] = "select_coin"
-    await update.message.reply_text("请选择币种", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    await update.message.reply_text(
+        "请选择币种",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def add_select_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     context.user_data["add_coin"] = query.data.replace("coin_", "")
     context.user_data["add_step"] = "address"
 
     keyboard = [[InlineKeyboardButton("❌ 取消", callback_data="add_cancel")]]
-    await query.message.reply_text("请输入地址", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    await query.message.reply_text(
+        "请输入地址",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "add_step" not in context.user_data:
@@ -121,19 +158,30 @@ async def add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
-    if context.user_data["add_step"] == "address":
+    step = context.user_data["add_step"]
+
+    if step == "address":
         context.user_data["add_address"] = update.message.text.strip()
         context.user_data["add_step"] = "note"
+
         keyboard = [[InlineKeyboardButton("❌ 取消", callback_data="add_cancel")]]
-        await update.message.reply_text("请输入备注 (发送 - 跳过)", reply_markup=InlineKeyboardMarkup(keyboard))
+
+        await update.message.reply_text(
+            "请输入备注 (发送 - 跳过)",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     else:
         note = update.message.text.strip()
         if note == "-":
             note = None
-        add_wallet(chat_id,
-                   context.user_data["add_coin"],
-                   context.user_data["add_address"],
-                   note)
+
+        add_wallet(
+            chat_id,
+            context.user_data["add_coin"],
+            context.user_data["add_address"],
+            note
+        )
+
         await update.message.reply_text("✅ 添加成功")
         context.user_data.clear()
 
@@ -143,164 +191,105 @@ async def add_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await query.message.reply_text("❌ 已取消")
 
-# ================== LIST ==================
-async def list_wallet(update, context):
-    chat_id = update.effective_chat.id
-    wallets = [w for w in get_wallets() if w["chat_id"] == chat_id]
-    if not wallets:
-        await update.message.reply_text("没有 address")
-        return
-
-    grouped = {"BTC":[], "ETH":[], "ERC20":[], "TRC20":[]}
-    for w in wallets:
-        grouped[w["coin"]].append(w)
-
-    text = "📋 当前群监控地址\n\n"
-    for coin, items in grouped.items():
-        text += f"{coin} ({len(items)})\n"
-        for w in items:
-            text += f"`{escape_markdown(w['address'])}`\n"
-            if w.get("note"):
-                text += f"备注 | {escape_markdown(w['note'])}\n"
-            text += "\n"
-
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
-
-# ================== REMOVE ==================
-async def remove_start(update, context):
-    if not is_admin(update.effective_chat.id, update.effective_user.id, MASTER_ID):
-        await update.message.reply_text("⛔ 没有权限")
-        return
-
-    keyboard = [
-        [InlineKeyboardButton("BTC", callback_data="rmcoin_BTC")],
-        [InlineKeyboardButton("ETH", callback_data="rmcoin_ETH")],
-        [InlineKeyboardButton("ERC20", callback_data="rmcoin_ERC20")],
-        [InlineKeyboardButton("TRC20", callback_data="rmcoin_TRC20")],
-        [InlineKeyboardButton("❌ 取消", callback_data="rm_cancel")]
-    ]
-    await update.message.reply_text("选择币种", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def remove_select_coin(update, context):
-    query = update.callback_query
-    await query.answer()
-    coin = query.data.replace("rmcoin_", "")
-    chat_id = query.message.chat.id
-
-    wallets = [w for w in get_wallets() if w["chat_id"]==chat_id and w["coin"]==coin]
-    if not wallets:
-        await query.message.reply_text("没有地址")
-        return
-
-    keyboard = [[InlineKeyboardButton(w["address"][:10]+"...",
-                callback_data=f"rmaddr_{coin}_{w['address']}")] for w in wallets]
-    keyboard.append([InlineKeyboardButton("❌ 取消", callback_data="rm_cancel")])
-    await query.message.reply_text("选择要删除的地址", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def remove_confirm(update, context):
-    query = update.callback_query
-    await query.answer()
-    _, coin, address = query.data.split("_",2)
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM wallets WHERE chat_id=%s AND coin=%s AND address=%s",
-                (query.message.chat.id, coin, address))
-    conn.commit()
-    conn.close()
-    await query.message.reply_text("🗑 删除成功")
-
-async def remove_cancel(update, context):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("❌ 已取消")
-
-# ================== ADMIN ==================
-async def addadmin(update, context):
-    if update.effective_user.id != MASTER_ID:
-        return
-    add_admin(update.effective_chat.id, int(context.args[0]))
-    await update.message.reply_text("✅ 添加管理员成功")
-
-async def deladmin(update, context):
-    if update.effective_user.id != MASTER_ID:
-        return
-    remove_admin(update.effective_chat.id, int(context.args[0]))
-    await update.message.reply_text("🗑 删除管理员成功")
-
-async def adminlist(update, context):
-    if update.effective_user.id != MASTER_ID:
-        return
-    admins = get_admins(update.effective_chat.id)
-    text = "管理员列表:\n"
-    for a in admins:
-        text += f"{a[0]}\n"
-    await update.message.reply_text(text)
-
-async def master(update, context):
-    if not is_admin(update.effective_chat.id, update.effective_user.id, MASTER_ID):
-        return
-    await update.message.reply_text(
-        "/add\n/remove\n/list\n"
-        "/addadmin\n/deladmin\n/adminlist\n/master"
-    )
-
 # ================== AUTO CHECK ==================
 async def auto_check(app):
+    print("Auto check started")
+
     while True:
         wallets = get_wallets()
+
         for w in wallets:
-            chat_id=w["chat_id"]
-            coin=w["coin"]
-            address=w["address"]
-            note=w.get("note")
+            chat_id = w["chat_id"]
+            coin = w["coin"]
+            address = w["address"]
+            note = w.get("note")
 
-            if coin=="BTC": result=check_btc(address)
-            elif coin=="ETH": result=check_eth_alchemy(address)
-            elif coin=="ERC20": result=check_eth_alchemy(address,True)
-            elif coin=="TRC20": result=check_trc20(address)
-            else: continue
+            if coin == "BTC":
+                result = check_btc(address)
+            elif coin == "ETH":
+                result = check_eth_alchemy(address)
+            elif coin == "ERC20":
+                result = check_eth_alchemy(address, True)
+            elif coin == "TRC20":
+                result = check_trc20(address)
+            else:
+                continue
 
-            if not result: continue
+            if not result:
+                continue
+
             txid, amount, _ = result
-            if already_notified(chat_id, txid): continue
 
-            note_text=f"备注 | {escape_markdown(note)}\n" if note else ""
-            text=(f"🚨 出金\n\n币种 | {coin}\n"
-                  f"{note_text}"
-                  f"数量 | {amount}\n"
-                  f"客户地址 | `{escape_markdown(address)}`")
+            if already_notified(chat_id, txid):
+                continue
 
-            await app.bot.send_message(chat_id,text,parse_mode=ParseMode.MARKDOWN_V2)
-            mark_notified(chat_id,txid)
+            note_text = f"备注 | {escape_markdown(note)}\n" if note else ""
+
+            text = (
+                f"🚨 出金\n\n"
+                f"币种 | {coin}\n"
+                f"{note_text}"
+                f"数量 | {amount}\n"
+                f"客户地址 | `{escape_markdown(address)}`"
+            )
+
+            await app.bot.send_message(
+                chat_id,
+                text,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+
+            mark_notified(chat_id, txid)
 
         await asyncio.sleep(CHECK_INTERVAL)
 
+# ================== TEST ==================
+async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not is_admin(chat_id, user_id, MASTER_ID):
+        await update.message.reply_text("⛔ 没有权限")
+        return
+
+    text = "🧪 系统检测...\n\n"
+
+    try:
+        conn = get_conn()
+        conn.close()
+        text += "🗄 Database: ✅\n"
+    except Exception as e:
+        text += f"🗄 Database: ❌ {e}\n"
+
+    try:
+        me = await context.bot.get_me()
+        text += f"🤖 Bot: ✅ {me.username}\n"
+    except Exception as e:
+        text += f"🤖 Bot: ❌ {e}\n"
+
+    await update.message.reply_text(text)
+
 # ================== MAIN ==================
 def main():
+    print("Starting application...")
+
     init_db()
-    app=Application.builder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("add",add_start))
-    app.add_handler(CallbackQueryHandler(add_select_coin,pattern="^coin_"))
-    app.add_handler(CallbackQueryHandler(add_cancel,pattern="^add_cancel$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,add_flow))
+    app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("list",list_wallet))
-    app.add_handler(CommandHandler("remove",remove_start))
-    app.add_handler(CallbackQueryHandler(remove_select_coin,pattern="^rmcoin_"))
-    app.add_handler(CallbackQueryHandler(remove_confirm,pattern="^rmaddr_"))
-    app.add_handler(CallbackQueryHandler(remove_cancel,pattern="^rm_cancel$"))
+    app.add_handler(CommandHandler("add", add_start))
+    app.add_handler(CallbackQueryHandler(add_select_coin, pattern="^coin_"))
+    app.add_handler(CallbackQueryHandler(add_cancel, pattern="^add_cancel$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_flow))
+    app.add_handler(CommandHandler("test", test))
 
-    app.add_handler(CommandHandler("addadmin",addadmin))
-    app.add_handler(CommandHandler("deladmin",deladmin))
-    app.add_handler(CommandHandler("adminlist",adminlist))
-    app.add_handler(CommandHandler("master",master))
+    async def startup(app):
+        print("Bot polling started")
+        asyncio.create_task(auto_check(app))
 
-    async def post_init(app):
-        app.create_task(auto_check(app))
+    app.post_init = startup
 
-    app.post_init=post_init
     app.run_polling()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
