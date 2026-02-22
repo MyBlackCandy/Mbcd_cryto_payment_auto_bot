@@ -456,6 +456,30 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{a[0]}\n"
 
     await update.message.reply_text(text)
+
+    
+# ================== START ==================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    text = (
+        "🤖 监控机器人已启动\n\n"
+        f"🆔 群ID: `{chat_id}`\n"
+        f"👤 你的ID: `{user_id}`\n\n"
+        "📌 使用方法:\n"
+        "/add 添加地址\n"
+        "/remove 删除地址\n"
+        "/list 查看地址\n"
+        "/test 系统检测\n\n"
+        "👑 管理命令:\n"
+        "/addadmin 用户ID\n"
+        "/deladmin 用户ID\n"
+        "/adminlist\n"
+        "/master"
+    )
+
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     
 # ================== MAIN ==================
 def main():
@@ -484,6 +508,8 @@ def main():
     app.add_handler(CommandHandler("deladmin", deladmin))
     app.add_handler(CommandHandler("adminlist", adminlist))
     app.add_handler(CommandHandler("master", master))
+
+    app.add_handler(CommandHandler("start", start))
 
     
     async def startup(app):
