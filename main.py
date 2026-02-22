@@ -360,6 +360,7 @@ def check_trc20_withdraw(address):
 
 
 # ================== AUTO CHECK ==================
+# ================== AUTO CHECK ==================
 async def auto_check(app):
 
     while True:
@@ -372,7 +373,7 @@ async def auto_check(app):
             address = w["address"]
             chat_id = w["chat_id"]
 
-            # ---------------- เลือก chain ----------------
+            # -------- เลือก chain --------
             if coin == "BTC":
                 result = check_btc_withdraw(address)
 
@@ -393,33 +394,37 @@ async def auto_check(app):
 
             txid, amount = result
 
-            # ---------------- กันแจ้งซ้ำ ----------------
+            # -------- กันแจ้งซ้ำ --------
             if is_notified(chat_id, txid):
                 continue
 
-            # ---------------- คำนวณ USD ----------------
+            # -------- คำนวณ USD --------
             usd_text = ""
 
-            if isinstance(amount, str):
-                # ERC20 แบบมี symbol เช่น 100 USDT
-                try:
-                    value, token = amount.split()
-                    value = Decimal(value)
+            # BTC / ETH ใช้ราคาตลาด
+            if coin in ["BTC", "ETH"] and not isinstance(amount, str):
 
-                    if token.upper() in ["USDT", "USDC"]:
-                        usd_value = value
-                        usd_text = f"\n💲 价值: ${usd_value:.2f}"
-                    else:
-                        usd_text = ""
-                except:
-                    pass
-            else:
                 price = get_price_usd(coin)
+
                 if price:
                     usd_value = amount * price
                     usd_text = f"\n💲 价值: ${usd_value:.2f}"
 
-            # ---------------- ส่งข้อความ ----------------
+            # ERC20 / TRC20 = 1 USD
+            elif coin in ["ERC20", "TRC20"]:
+
+                if isinstance(amount, str):
+                    try:
+                        value, _ = amount.split()
+                        usd_value = Decimal(value)
+                        usd_text = f"\n💲 价值: ${usd_value:.2f}"
+                    except:
+                        usd_text = ""
+                else:
+                    usd_value = Decimal(amount)
+                    usd_text = f"\n💲 价值: ${usd_value:.2f}"
+
+            # -------- ส่งข้อความ --------
             await app.bot.send_message(
                 chat_id,
                 f"🚨 新交易通知\n\n"
@@ -430,7 +435,7 @@ async def auto_check(app):
                 parse_mode=ParseMode.MARKDOWN
             )
 
-            # ---------------- บันทึกลง DB ----------------
+            # -------- บันทึกลง DB --------
             mark_notified(chat_id, txid)
 
         await asyncio.sleep(CHECK_INTERVAL)
@@ -462,16 +467,13 @@ async def startup(app):
     asyncio.create_task(auto_check(app))
 
 # ================== PRICE ==================
+# ================== PRICE ==================
 def get_price_usd(symbol):
     try:
         mapping = {
             "BTC": "bitcoin",
-            "ETH": "ethereum",
-            "TRC20": "tron"
+            "ETH": "ethereum"
         }
-
-        if symbol == "ERC20":
-            return None  # ERC20 จะดึงจาก token symbol แยก
 
         coin_id = mapping.get(symbol)
         if not coin_id:
@@ -516,27 +518,6 @@ elif coin in ["ERC20", "TRC20"]:
         usd_value = Decimal(amount)
         usd_text = f"\n💲 价值: ${usd_value:.2f}"
 
-def get_price_usd(symbol):
-    try:
-        mapping = {
-            "BTC": "bitcoin",
-            "ETH": "ethereum"
-        }
-
-        coin_id = mapping.get(symbol)
-        if not coin_id:
-            return None
-
-        url = "https://api.coingecko.com/api/v3/simple/price"
-        res = requests.get(url, params={
-            "ids": coin_id,
-            "vs_currencies": "usd"
-        }, timeout=10).json()
-
-        return Decimal(str(res[coin_id]["usd"]))
-
-    except:
-        return None
 
 # ================== MAIN ==================
 def main():
