@@ -182,14 +182,28 @@ async def auto_check(app):
                 print("Error:", e)
 
         await asyncio.sleep(CHECK_INTERVAL)
+# ================= start =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Crypto Notify Bot พร้อมใช้งาน\n\n"
+        "คำสั่งที่ใช้ได้:\n"
+        "/addbtc address\n"
+        "/addeth address\n"
+        "/adderc20 address\n"
+        "/addtrc20 address\n"
+        "/list\n"
+        "/remove address\n"
+        "/setadmin user_id"
+    )
 
 # ================= MAIN =================
 
-async def main():
+def main():
     init_db()
 
     app = Application.builder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("addbtc", addbtc))
     app.add_handler(CommandHandler("addeth", addeth))
     app.add_handler(CommandHandler("adderc20", adderc20))
@@ -198,15 +212,15 @@ async def main():
     app.add_handler(CommandHandler("list", list_wallet))
     app.add_handler(CommandHandler("setadmin", setadmin))
 
-    # start background loop after bot starts
-    async def on_start(app):
+    # start background task after bot starts
+    async def post_init(app):
         app.create_task(auto_check(app))
 
-    app.post_init = on_start
+    app.post_init = post_init
 
     print("Bot starting...")
-    await app.run_polling()
+    app.run_polling()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
