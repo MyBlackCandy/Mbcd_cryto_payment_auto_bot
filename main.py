@@ -5,6 +5,9 @@ from decimal import Decimal
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from db import *
+from telegram.constants import ParseMode
+
+
 
 TOKEN = os.getenv("TOKEN")
 MASTER_ID = int(os.getenv("MASTER_ID"))
@@ -164,7 +167,7 @@ async def auto_check(app):
                         f"币种 | {coin}\n"
                         f"数量 | {amount:.6f}\n"
                         f"金额 | {total:,.2f} 美金\n"
-                        f"客户地址 | {address}"
+                        f"客户地址 | `{address}`"
                     )
 
                 elif coin == "ERC20":
@@ -173,7 +176,7 @@ async def auto_check(app):
                         "币种 | ERC20\n"
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
-                        f"客户地址 | {address}"
+                        f"客户地址 | `{address}`"
                     )
 
                 elif coin == "TRC20":
@@ -182,10 +185,10 @@ async def auto_check(app):
                         "币种 | TRC20\n"
                         f"数量 | {amount:.2f}\n"
                         f"金额 | {amount:,.2f} 美金\n"
-                        f"客户地址 | {address}"
+                        f"客户地址 | `{address}`"
                     )
 
-                await app.bot.send_message(chat_id, text)
+                await app.bot.send_message(chat_id, text, parse_mode="Markdown")
                 mark_notified(chat_id, txid)
 
             except Exception as e:
